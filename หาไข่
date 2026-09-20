@@ -1,0 +1,1156 @@
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+local CoreGui = game:GetService("CoreGui")
+
+local LocalPlayer = Players.LocalPlayer
+
+-- ==================== เคลียร์ระบบเก่า ====================
+local guiParent = (gethui and gethui()) or (pcall(function() return CoreGui end) and CoreGui) or LocalPlayer:WaitForChild("PlayerGui")
+if guiParent:FindFirstChild("TANGZX_UnifiedHub") then
+    guiParent:FindFirstChild("TANGZX_UnifiedHub"):Destroy()
+end
+
+if getgenv and getgenv().TANG_ZX_HUB_CLEANUP then
+    getgenv().TANG_ZX_HUB_CLEANUP()
+end
+
+-- ==================== การตั้งค่าระบบ (Settings) ====================
+local Settings = {
+    WalkSpeed = 16,
+    JumpPower = 50,
+    Noclip = false,
+
+    ESPEnabled = true,
+    ShowName = true,
+    ShowDistance = true,
+    RareOnly = false,
+    ESPColorMode = "รุ้ง",
+    MaxDistance = 100000,
+
+    AutoFarmAll = false,
+    AutoFarmRareOnly = false,
+    FarmMode = "วิ่ง", -- "วิ่ง" (วิ่งสปีด 250 แท้จริง) หรือ "บิน" (บินสมูทช้าๆ ปลอดภัย)
+    FarmRunSpeed = 250, -- สปีดวิ่งกลับ 250
+    SafeFlySpeed = 150, -- สปีดบินกลับช้าลงเพื่อความปลอดภัย ไม่ขึ้นวาป
+    HomeCFrame = nil,
+
+    AutoPlaceEggs = false,
+    AutoHatchEggs = false,
+
+    UIBorderColor = "ฟ้า",
+    UITransparency = 0.1
+}
+
+local RareKeywords = {"3m", "7m", "300m", "1.5b", "100b", "300b", "1t", "secret", "godly", "mythic", "legendary", "shiny", "rainbow", "gold", "exclusive", "หายาก", "ซี้ด", "ซิกเครท", "มิธิค"}
+local TrackedEggs = {}
+local isFarming = false
+local isMoving = false
+local globalNoclipConn = nil
+
+-- ==================== ระบบคัดกรองไข่ (ตัดไข่ในสวน / ตัดไข่ฟัก / ตัด NPC) ====================
+local function IsInGardenArea(obj)
+    local parent = obj.Parent
+    while parent and parent ~= workspace do
+        local pName = string.lower(parent.Name)
+        if string.find(pName, "garden") or string.find(pName, "plot") or string.find(pName, "base") or string.find(pName, "farm") or string.find(pName, "pen") or string.find(pName, "zone") then
+            return true
+        end
+        parent = parent.Parent
+    end
+    return false
+end
+
+local function IsValidGroundEgg(obj)
+    if not obj or not obj.Parent then return false end
+    if not (obj:IsA("Model") or obj:IsA("BasePart")) then return false end
+
+    if obj:FindFirstChildOfClass("Humanoid") or obj:FindFirstChild("HumanoidRootPart") then
+        return false
+    end
+
+    if IsInGardenArea(obj) then
+        return false
+    end
+
+    local cur = obj
+    while cur and cur ~= workspace do
+        if cur:IsA("Tool") or cur:IsA("Backpack") or cur:FindFirstChildOfClass("Humanoid") then
+            return false
+        end
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p.Character and (cur == p.Character or cur:IsDescendantOf(p.Character)) then
+                return false
+            end
+        end
+        cur = cur.Parent
+    end
+
+    local name = string.lower(obj.Name)
+    local isEggName = string.find(name, "egg") or string.find(name, "ไข่")
+    local hasPrompt = false
+
+    for _, child in ipairs(obj:GetDescendants()) do
+        if child:IsA("ProximityPrompt") then
+            hasPrompt = true
+            break
+        end
+    end
+
+    return isEggName or hasPrompt
+end
+
+local function GetPrimaryPart(obj)
+    if obj:IsA("BasePart") then return obj end
+    if obj:IsA("Model") then
+        if obj.PrimaryPart then return obj.PrimaryPart end
+        return obj:FindFirstChildWhichIsA("BasePart")
+    end
+    return nil
+end
+
+local function GetEggValueAndRarity(objName, objDescendants)
+    local combinedText = string.lower(objName)
+    if objDescendants then
+        for _, child in ipairs(objDescendants) do
+            if child:IsA("TextLabel") or child:IsA("SurfaceGui") or child:IsA("BillboardGui") then
+                combinedText = combinedText .. " " .. string.lower(child.Name)
+                if child:IsA("TextLabel") then
+                    combinedText = combinedText .. " " .. string.lower(child.Text)
+                end
+            end
+        end
+    end
+
+    local score = 1
+    if string.find(combinedText, "1t") or string.find(combinedText, "%d+%.?%d*t") then
+        score = 10000000
+    elseif string.find(combinedText, "300b") then
+        score = 3000000
+    elseif string.find(combinedText, "100b") then
+        score = 1000000
+    elseif string.find(combinedText, "secret") or string.find(combinedText, "godly") then
+        score = 500000
+    elseif string.find(combinedText, "mythic") then
+        score = 50000
+    elseif string.find(combinedText, "legendary") then
+        score = 10000
+    elseif string.find(combinedText, "300m") or string.find(combinedText, "1.5b") then
+        score = 8000
+    elseif string.find(combinedText, "3m") or string.find(combinedText, "7m") then
+        score = 5000
+    elseif string.find(combinedText, "rare") or string.find(combinedText, "gold") then
+        score = 1000
+    end
+    return score
+end
+
+local function IsHighTierEgg(obj)
+    local searchStr = string.lower(obj.Name)
+    for _, child in ipairs(obj:GetDescendants()) do
+        if child:IsA("TextLabel") or child:IsA("SurfaceGui") or child:IsA("BillboardGui") then
+            searchStr = searchStr .. " " .. string.lower(child.Name)
+            if child:IsA("TextLabel") then
+                searchStr = searchStr .. " " .. string.lower(child.Text)
+            end
+        end
+    end
+    for _, keyword in ipairs(RareKeywords) do
+        if string.find(searchStr, keyword) then
+            return true
+        end
+    end
+    return false
+end
+
+-- ==================== ธีมสี (Theme Colors) ====================
+local function GetColorFromTheme(themeName)
+    if themeName == "รุ้ง" then
+        return Color3.fromHSV(tick() % 4 / 4, 1, 1)
+    elseif themeName == "แดง" then
+        return Color3.fromRGB(255, 45, 45)
+    elseif themeName == "ฟ้า" then
+        return Color3.fromRGB(0, 162, 255)
+    elseif themeName == "เขียว" then
+        return Color3.fromRGB(46, 204, 113)
+    elseif themeName == "ส้ม" then
+        return Color3.fromRGB(243, 156, 18)
+    elseif themeName == "ม่วง" then
+        return Color3.fromRGB(155, 89, 182)
+    elseif themeName == "ขาว" then
+        return Color3.fromRGB(255, 255, 255)
+    end
+    return Color3.fromRGB(0, 162, 255)
+end
+
+-- ==================== GUI หลัก (TANG ZX | EGG V10) ====================
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "TANGZX_UnifiedHub"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.Parent = guiParent
+
+local MainFrame = Instance.new("Frame")
+MainFrame.Name = "MainFrame"
+MainFrame.Size = UDim2.new(0, 560, 0, 360)
+MainFrame.Position = UDim2.new(0.5, -280, 0.5, -180)
+MainFrame.BackgroundColor3 = Color3.fromRGB(16, 20, 28)
+MainFrame.BackgroundTransparency = Settings.UITransparency
+MainFrame.Active = true
+MainFrame.ClipsDescendants = true
+MainFrame.Parent = ScreenGui
+Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 10)
+
+local MainStroke = Instance.new("UIStroke", MainFrame)
+MainStroke.Thickness = 2
+MainStroke.Color = GetColorFromTheme(Settings.UIBorderColor)
+
+local FloatingIcon = Instance.new("TextButton")
+FloatingIcon.Name = "FloatingEggIcon"
+FloatingIcon.Size = UDim2.new(0, 50, 0, 50)
+FloatingIcon.Position = UDim2.new(0.05, 0, 0.2, 0)
+FloatingIcon.BackgroundColor3 = Color3.fromRGB(16, 20, 28)
+FloatingIcon.Text = "🥚"
+FloatingIcon.TextSize = 26
+FloatingIcon.Visible = false
+FloatingIcon.Active = true
+FloatingIcon.Parent = ScreenGui
+Instance.new("UICorner", FloatingIcon).CornerRadius = UDim.new(0, 8)
+
+local IconStroke = Instance.new("UIStroke", FloatingIcon)
+IconStroke.Thickness = 2
+IconStroke.Color = GetColorFromTheme(Settings.UIBorderColor)
+
+local TitleBar = Instance.new("Frame")
+TitleBar.Size = UDim2.new(1, 0, 0, 38)
+TitleBar.BackgroundColor3 = Color3.fromRGB(22, 27, 38)
+TitleBar.BackgroundTransparency = Settings.UITransparency
+TitleBar.Parent = MainFrame
+Instance.new("UICorner", TitleBar).CornerRadius = UDim.new(0, 10)
+
+local TitleLabel = Instance.new("TextLabel")
+TitleLabel.Size = UDim2.new(1, -50, 1, 0)
+TitleLabel.Position = UDim2.new(0, 14, 0, 0)
+TitleLabel.Text = "TANG ZX | EGG V10"
+TitleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+TitleLabel.Font = Enum.Font.GothamBold
+TitleLabel.TextSize = 14
+TitleLabel.TextXAlignment = Enum.TextXAlignment.Left
+TitleLabel.BackgroundTransparency = 1
+TitleLabel.Parent = TitleBar
+
+local MinBtn = Instance.new("TextButton")
+MinBtn.Size = UDim2.new(0, 26, 0, 26)
+MinBtn.Position = UDim2.new(1, -34, 0.5, -13)
+MinBtn.BackgroundColor3 = Color3.fromRGB(230, 70, 70)
+MinBtn.Text = "—"
+MinBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+MinBtn.Font = Enum.Font.GothamBold
+MinBtn.TextSize = 14
+MinBtn.Parent = TitleBar
+Instance.new("UICorner", MinBtn).CornerRadius = UDim.new(0, 6)
+
+MinBtn.MouseButton1Click:Connect(function() MainFrame.Visible = false; FloatingIcon.Visible = true end)
+FloatingIcon.MouseButton1Click:Connect(function() FloatingIcon.Visible = false; MainFrame.Visible = true end)
+
+local function MakeDraggable(handle, frameToMove)
+    local dragging, dragInput, dragStart, startPos
+    handle.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = frameToMove.Position
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then dragging = false end
+            end)
+        end
+    end)
+    handle.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+            dragInput = input
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if input == dragInput and dragging then
+            local delta = input.Position - dragStart
+            frameToMove.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        end
+    end)
+end
+
+MakeDraggable(TitleBar, MainFrame)
+MakeDraggable(FloatingIcon, FloatingIcon)
+
+-- ==================== แถบข้าง (5 แถบ) ====================
+local Sidebar = Instance.new("Frame")
+Sidebar.Size = UDim2.new(0, 130, 1, -44)
+Sidebar.Position = UDim2.new(0, 6, 0, 42)
+Sidebar.BackgroundColor3 = Color3.fromRGB(20, 24, 34)
+Sidebar.BackgroundTransparency = Settings.UITransparency
+Sidebar.Parent = MainFrame
+Instance.new("UICorner", Sidebar).CornerRadius = UDim.new(0, 8)
+
+local SidebarList = Instance.new("UIListLayout", Sidebar)
+SidebarList.Padding = UDim.new(0, 5)
+
+local ContentArea = Instance.new("Frame")
+ContentArea.Size = UDim2.new(1, -150, 1, -44)
+ContentArea.Position = UDim2.new(0, 142, 0, 42)
+ContentArea.BackgroundTransparency = 1
+ContentArea.Parent = MainFrame
+
+local Pages = {}
+local Tabs = {"ผู้เล่น", "ออโตฟาร์ม", "เกี่ยวกับไข่", "มองทะลุ", "ตั้งค่า"}
+
+for _, tabName in ipairs(Tabs) do
+    local page = Instance.new("ScrollingFrame")
+    page.Name = tabName .. "_Page"
+    page.Size = UDim2.new(1, 0, 1, 0)
+    page.BackgroundTransparency = 1
+    page.CanvasSize = UDim2.new(0, 0, 0, 0)
+    page.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    page.ScrollBarThickness = 4
+    page.Visible = (tabName == "ผู้เล่น")
+    page.Parent = ContentArea
+
+    local pageList = Instance.new("UIListLayout", page)
+    pageList.Padding = UDim.new(0, 8)
+    Pages[tabName] = page
+end
+
+local TabButtons = {}
+for _, tabName in ipairs(Tabs) do
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(1, -8, 0, 36)
+    btn.BackgroundColor3 = (tabName == "ผู้เล่น") and Color3.fromRGB(0, 130, 220) or Color3.fromRGB(28, 34, 48)
+    btn.Text = tabName
+    btn.TextColor3 = (tabName == "ผู้เล่น") and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(180, 190, 200)
+    btn.Font = Enum.Font.GothamBold
+    btn.TextSize = 11
+    btn.Parent = Sidebar
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
+
+    btn.MouseButton1Click:Connect(function()
+        for name, p in pairs(Pages) do p.Visible = (name == tabName) end
+        for name, b in pairs(TabButtons) do
+            b.BackgroundColor3 = (name == tabName) and Color3.fromRGB(0, 130, 220) or Color3.fromRGB(28, 34, 48)
+            b.TextColor3 = (name == tabName) and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(180, 190, 200)
+        end
+    end)
+    TabButtons[tabName] = btn
+end
+
+-- ==================== Helper UI Components ====================
+local function CreateToggle(parent, name, defaultVal, callback)
+    local state = defaultVal
+    local card = Instance.new("Frame")
+    card.Size = UDim2.new(1, -10, 0, 36)
+    card.BackgroundColor3 = Color3.fromRGB(22, 28, 38)
+    card.Parent = parent
+    Instance.new("UICorner", card).CornerRadius = UDim.new(0, 6)
+
+    local lbl = Instance.new("TextLabel")
+    lbl.Size = UDim2.new(1, -50, 1, 0)
+    lbl.Position = UDim2.new(0, 10, 0, 0)
+    lbl.Text = name
+    lbl.TextColor3 = Color3.fromRGB(230, 230, 230)
+    lbl.Font = Enum.Font.GothamMedium
+    lbl.TextSize = 11
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.BackgroundTransparency = 1
+    lbl.Parent = card
+
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(0, 36, 0, 18)
+    btn.Position = UDim2.new(1, -44, 0.5, -9)
+    btn.BackgroundColor3 = state and Color3.fromRGB(46, 204, 113) or Color3.fromRGB(70, 70, 80)
+    btn.Text = ""
+    btn.Parent = card
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(1, 0)
+
+    local dot = Instance.new("Frame")
+    dot.Size = UDim2.new(0, 14, 0, 14)
+    dot.Position = state and UDim2.new(1, -16, 0.5, -7) or UDim2.new(0, 2, 0.5, -7)
+    dot.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    dot.Parent = btn
+    Instance.new("UICorner", dot).CornerRadius = UDim.new(1, 0)
+
+    btn.MouseButton1Click:Connect(function()
+        state = not state
+        btn.BackgroundColor3 = state and Color3.fromRGB(46, 204, 113) or Color3.fromRGB(70, 70, 80)
+        dot.Position = state and UDim2.new(1, -16, 0.5, -7) or UDim2.new(0, 2, 0.5, -7)
+        callback(state)
+    end)
+end
+
+local function CreateSliderWithBox(parent, title, minVal, maxVal, defaultVal, callback)
+    local card = Instance.new("Frame")
+    card.Size = UDim2.new(1, -10, 0, 52)
+    card.BackgroundColor3 = Color3.fromRGB(22, 28, 38)
+    card.Parent = parent
+    Instance.new("UICorner", card).CornerRadius = UDim.new(0, 6)
+
+    local lbl = Instance.new("TextLabel")
+    lbl.Size = UDim2.new(0.6, 0, 0, 20)
+    lbl.Position = UDim2.new(0, 10, 0, 4)
+    lbl.Text = title
+    lbl.TextColor3 = Color3.fromRGB(220, 220, 220)
+    lbl.Font = Enum.Font.GothamMedium
+    lbl.TextSize = 11
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.BackgroundTransparency = 1
+    lbl.Parent = card
+
+    local box = Instance.new("TextBox")
+    box.Size = UDim2.new(0, 50, 0, 18)
+    box.Position = UDim2.new(1, -60, 0, 5)
+    box.BackgroundColor3 = Color3.fromRGB(30, 36, 50)
+    box.Text = tostring(defaultVal)
+    box.TextColor3 = Color3.fromRGB(0, 200, 255)
+    box.Font = Enum.Font.GothamBold
+    box.TextSize = 10
+    box.Parent = card
+    Instance.new("UICorner", box).CornerRadius = UDim.new(0, 4)
+
+    local barBg = Instance.new("Frame")
+    barBg.Size = UDim2.new(1, -20, 0, 6)
+    barBg.Position = UDim2.new(0, 10, 0, 34)
+    barBg.BackgroundColor3 = Color3.fromRGB(45, 50, 65)
+    barBg.Parent = card
+    Instance.new("UICorner", barBg).CornerRadius = UDim.new(1, 0)
+
+    local fill = Instance.new("Frame")
+    local ratio = math.clamp((defaultVal - minVal) / (maxVal - minVal), 0, 1)
+    fill.Size = UDim2.new(ratio, 0, 1, 0)
+    fill.BackgroundColor3 = Color3.fromRGB(0, 162, 255)
+    fill.Parent = barBg
+    Instance.new("UICorner", fill).CornerRadius = UDim.new(1, 0)
+
+    local isSliding = false
+    local function UpdateVal(inputX)
+        local rel = math.clamp((inputX - barBg.AbsolutePosition.X) / barBg.AbsoluteSize.X, 0, 1)
+        local finalVal = math.floor(minVal + (maxVal - minVal) * rel)
+        fill.Size = UDim2.new(rel, 0, 1, 0)
+        box.Text = tostring(finalVal)
+        callback(finalVal)
+    end
+
+    barBg.InputBegan:Connect(function(inp)
+        if inp.UserInputType == Enum.UserInputType.MouseButton1 or inp.UserInputType == Enum.UserInputType.Touch then
+            isSliding = true
+            UpdateVal(inp.Position.X)
+        end
+    end)
+
+    UserInputService.InputChanged:Connect(function(inp)
+        if isSliding and (inp.UserInputType == Enum.UserInputType.MouseMovement or inp.UserInputType == Enum.UserInputType.Touch) then
+            UpdateVal(inp.Position.X)
+        end
+    end)
+
+    UserInputService.InputEnded:Connect(function(inp)
+        if inp.UserInputType == Enum.UserInputType.MouseButton1 or inp.UserInputType == Enum.UserInputType.Touch then
+            isSliding = false
+        end
+    end)
+
+    box.FocusLost:Connect(function()
+        local num = tonumber(box.Text)
+        if num then
+            num = math.clamp(num, minVal, maxVal)
+            box.Text = tostring(num)
+            fill.Size = UDim2.new((num - minVal) / (maxVal - minVal), 0, 1, 0)
+            callback(num)
+        else
+            box.Text = tostring(defaultVal)
+        end
+    end)
+end
+
+-- ==================== แท็บที่ 1: ผู้เล่น ====================
+CreateSliderWithBox(Pages["ผู้เล่น"], "⚡ ความเร็วผู้เล่น (WalkSpeed)", 1, 350, 16, function(val)
+    Settings.WalkSpeed = val
+    local char = LocalPlayer.Character
+    if char and char:FindFirstChildOfClass("Humanoid") then
+        char:FindFirstChildOfClass("Humanoid").WalkSpeed = val
+    end
+end)
+
+CreateSliderWithBox(Pages["ผู้เล่น"], "🚀 ความกระโดดสูง (JumpPower)", 1, 300, 50, function(val)
+    Settings.JumpPower = val
+    local char = LocalPlayer.Character
+    if char and char:FindFirstChildOfClass("Humanoid") then
+        char:FindFirstChildOfClass("Humanoid").JumpPower = val
+    end
+end)
+
+CreateToggle(Pages["ผู้เล่น"], "🧱 ทะลุกำแพง / หิน ทุกอย่าง (Noclip)", false, function(val)
+    Settings.Noclip = val
+    if val then
+        if globalNoclipConn then globalNoclipConn:Disconnect() end
+        globalNoclipConn = RunService.Stepped:Connect(function()
+            local char = LocalPlayer.Character
+            if char then
+                for _, p in ipairs(char:GetDescendants()) do
+                    if p:IsA("BasePart") then p.CanCollide = false end
+                end
+            end
+        end)
+    else
+        if globalNoclipConn then globalNoclipConn:Disconnect(); globalNoclipConn = nil end
+    end
+end)
+
+-- ==================== แท็บที่ 2: ออโตฟาร์ม (ปุ่มสลับ วาร์ปไป->บินกลับ / วาร์ปไป->วิ่งกลับ 250) ====================
+local ModeCard = Instance.new("Frame")
+ModeCard.Size = UDim2.new(1, -10, 0, 48)
+ModeCard.BackgroundColor3 = Color3.fromRGB(22, 28, 38)
+ModeCard.Parent = Pages["ออโตฟาร์ม"]
+Instance.new("UICorner", ModeCard).CornerRadius = UDim.new(0, 6)
+
+local ModeLabel = Instance.new("TextLabel")
+ModeLabel.Size = UDim2.new(1, -10, 0, 18)
+ModeLabel.Position = UDim2.new(0, 10, 0, 4)
+ModeLabel.Text = "เลือกวิธีการเดินทางกลับฐานเดิม (วาร์ปไปหา -> รอก่อน 1 วิ):"
+ModeLabel.TextColor3 = Color3.fromRGB(220, 220, 220)
+ModeLabel.Font = Enum.Font.GothamMedium
+ModeLabel.TextSize = 10
+ModeLabel.TextXAlignment = Enum.TextXAlignment.Left
+ModeLabel.BackgroundTransparency = 1
+ModeLabel.Parent = ModeCard
+
+local ModeBtnsFrame = Instance.new("Frame")
+ModeBtnsFrame.Size = UDim2.new(1, -20, 0, 22)
+ModeBtnsFrame.Position = UDim2.new(0, 10, 0, 22)
+ModeBtnsFrame.BackgroundTransparency = 1
+ModeBtnsFrame.Parent = ModeCard
+
+local ModeLayout = Instance.new("UIListLayout", ModeBtnsFrame)
+ModeLayout.FillDirection = Enum.FillDirection.Horizontal
+ModeLayout.Padding = UDim.new(0, 6)
+
+local modes = {"วิ่ง", "บิน"}
+local ModeButtons = {}
+for _, mName in ipairs(modes) do
+    local mb = Instance.new("TextButton")
+    mb.Size = UDim2.new(0.48, 0, 1, 0)
+    mb.BackgroundColor3 = (Settings.FarmMode == mName) and Color3.fromRGB(0, 130, 220) or Color3.fromRGB(35, 42, 58)
+    mb.Text = (mName == "วิ่ง" and "โหมดวิ่งกลับ (สปีด 250 แท้จริง)" or "โหมดบินกลับ (บินช้าปลอดภัย)")
+    mb.TextColor3 = Color3.fromRGB(255, 255, 255)
+    mb.Font = Enum.Font.GothamBold
+    mb.TextSize = 10
+    mb.Parent = ModeBtnsFrame
+    Instance.new("UICorner", mb).CornerRadius = UDim.new(0, 4)
+
+    mb.MouseButton1Click:Connect(function()
+        Settings.FarmMode = mName
+        for _, b in ipairs(ModeBtnsFrame:GetChildren()) do
+            if b:IsA("TextButton") then b.BackgroundColor3 = Color3.fromRGB(35, 42, 58) end
+        end
+        mb.BackgroundColor3 = Color3.fromRGB(0, 130, 220)
+    end)
+    ModeButtons[mName] = mb
+end
+
+local FarmBtnsFrame = Instance.new("Frame")
+FarmBtnsFrame.Size = UDim2.new(1, -10, 0, 36)
+FarmBtnsFrame.BackgroundTransparency = 1
+FarmBtnsFrame.Parent = Pages["ออโตฟาร์ม"]
+
+local FarmAllBtn = Instance.new("TextButton")
+FarmAllBtn.Size = UDim2.new(0.48, 0, 1, 0)
+FarmAllBtn.BackgroundColor3 = Color3.fromRGB(30, 35, 48)
+FarmAllBtn.Text = "🤖 ออโตฟาร์มทั้งหมด"
+FarmAllBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+FarmAllBtn.Font = Enum.Font.GothamBold
+FarmAllBtn.TextSize = 11
+FarmAllBtn.Parent = FarmBtnsFrame
+Instance.new("UICorner", FarmAllBtn).CornerRadius = UDim.new(0, 6)
+
+local FarmRareBtn = Instance.new("TextButton")
+FarmRareBtn.Size = UDim2.new(0.48, 0, 1, 0)
+FarmRareBtn.Position = UDim2.new(0.52, 0, 0, 0)
+FarmRareBtn.BackgroundColor3 = Color3.fromRGB(30, 35, 48)
+FarmRareBtn.Text = "⭐ ฟาร์มเฉพาะไข่แรร์"
+FarmRareBtn.TextColor3 = Color3.fromRGB(255, 215, 0)
+FarmRareBtn.Font = Enum.Font.GothamBold
+FarmRareBtn.TextSize = 11
+FarmRareBtn.Parent = FarmBtnsFrame
+Instance.new("UICorner", FarmRareBtn).CornerRadius = UDim.new(0, 6)
+
+local EggScroll = Instance.new("ScrollingFrame")
+EggScroll.Size = UDim2.new(1, -10, 0, 160)
+EggScroll.BackgroundColor3 = Color3.fromRGB(18, 22, 30)
+EggScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+EggScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+EggScroll.ScrollBarThickness = 4
+EggScroll.Parent = Pages["ออโตฟาร์ม"]
+Instance.new("UICorner", EggScroll).CornerRadius = UDim.new(0, 6)
+
+local EggScrollLayout = Instance.new("UIListLayout", EggScroll)
+EggScrollLayout.Padding = UDim.new(0, 4)
+EggScrollLayout.SortOrder = Enum.SortOrder.LayoutOrder
+
+-- ==================== แท็บที่ 3: เกี่ยวกับไข่ ====================
+CreateToggle(Pages["เกี่ยวกับไข่"], "🌾 ออโต้วางไข่ในสวน (เลือกไข่ในตัวแล้ววางเอง)", false, function(val)
+    Settings.AutoPlaceEggs = val
+end)
+
+CreateToggle(Pages["เกี่ยวกับไข่"], "🐣 ออโต้ฟักไข่ในสวน (ฟักไข่ที่พร้อมทันที)", false, function(val)
+    Settings.AutoHatchEggs = val
+end)
+
+-- ==================== แท็บที่ 4: มองทะลุ ====================
+CreateToggle(Pages["มองทะลุ"], "เปิด/ปิด มองทะลุไข่ (ESP)", Settings.ESPEnabled, function(val) Settings.ESPEnabled = val end)
+CreateToggle(Pages["มองทะลุ"], "⭐ มองเฉพาะไข่หายาก", Settings.RareOnly, function(val) Settings.RareOnly = val end)
+CreateToggle(Pages["มองทะลุ"], "แสดงชื่อไข่ (Name)", Settings.ShowName, function(val) Settings.ShowName = val end)
+CreateToggle(Pages["มองทะลุ"], "แสดงระยะทาง (Distance)", Settings.ShowDistance, function(val) Settings.ShowDistance = val end)
+
+local ColorCard = Instance.new("Frame")
+ColorCard.Size = UDim2.new(1, -10, 0, 52)
+ColorCard.BackgroundColor3 = Color3.fromRGB(22, 28, 38)
+ColorCard.Parent = Pages["มองทะลุ"]
+Instance.new("UICorner", ColorCard).CornerRadius = UDim.new(0, 6)
+
+local CLabel = Instance.new("TextLabel")
+CLabel.Size = UDim2.new(1, -10, 0, 18)
+CLabel.Position = UDim2.new(0, 10, 0, 4)
+CLabel.Text = "เลือกสีขอบไข่ ESP:"
+CLabel.TextColor3 = Color3.fromRGB(220, 220, 220)
+CLabel.Font = Enum.Font.GothamMedium
+CLabel.TextSize = 11
+CLabel.TextXAlignment = Enum.TextXAlignment.Left
+CLabel.BackgroundTransparency = 1
+CLabel.Parent = ColorCard
+
+local ColorBtns = Instance.new("Frame")
+ColorBtns.Size = UDim2.new(1, -20, 0, 22)
+ColorBtns.Position = UDim2.new(0, 10, 0, 24)
+ColorBtns.BackgroundTransparency = 1
+ColorBtns.Parent = ColorCard
+local CLayout = Instance.new("UIListLayout", ColorBtns)
+CLayout.FillDirection = Enum.FillDirection.Horizontal
+CLayout.Padding = UDim.new(0, 6)
+
+local espColors = {"รุ้ง", "แดง", "น้ำเงิน"}
+for _, cName in ipairs(espColors) do
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.new(0.31, 0, 1, 0)
+    b.BackgroundColor3 = (Settings.ESPColorMode == cName) and Color3.fromRGB(0, 130, 220) or Color3.fromRGB(35, 42, 58)
+    b.Text = cName
+    b.TextColor3 = Color3.fromRGB(255, 255, 255)
+    b.Font = Enum.Font.GothamBold
+    b.TextSize = 10
+    b.Parent = ColorBtns
+    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 4)
+
+    b.MouseButton1Click:Connect(function()
+        for _, o in ipairs(ColorBtns:GetChildren()) do
+            if o:IsA("TextButton") then o.BackgroundColor3 = Color3.fromRGB(35, 42, 58) end
+        end
+        b.BackgroundColor3 = Color3.fromRGB(0, 130, 220)
+        Settings.ESPColorMode = cName
+    end)
+end
+
+-- ==================== แท็บที่ 5: ตั้งค่า ====================
+CreateSliderWithBox(Pages["ตั้งค่า"], "ความโปร่งใสเมนู (1% - 100%)", 0, 90, 10, function(val)
+    local transp = val / 100
+    Settings.UITransparency = transp
+    MainFrame.BackgroundTransparency = transp
+    TitleBar.BackgroundTransparency = transp
+    Sidebar.BackgroundTransparency = transp
+end)
+
+local BorderCard = Instance.new("Frame")
+BorderCard.Size = UDim2.new(1, -10, 0, 68)
+BorderCard.BackgroundColor3 = Color3.fromRGB(22, 28, 38)
+BorderCard.Parent = Pages["ตั้งค่า"]
+Instance.new("UICorner", BorderCard).CornerRadius = UDim.new(0, 6)
+
+local BLabel = Instance.new("TextLabel")
+BLabel.Size = UDim2.new(1, -10, 0, 18)
+BLabel.Position = UDim2.new(0, 10, 0, 4)
+BLabel.Text = "เลือกสีขอบเมนูหลัก:"
+BLabel.TextColor3 = Color3.fromRGB(220, 220, 220)
+BLabel.Font = Enum.Font.GothamMedium
+BLabel.TextSize = 11
+BLabel.TextXAlignment = Enum.TextXAlignment.Left
+BLabel.BackgroundTransparency = 1
+BLabel.Parent = BorderCard
+
+local BorderBtns = Instance.new("Frame")
+BorderBtns.Size = UDim2.new(1, -16, 0, 40)
+BorderBtns.Position = UDim2.new(0, 8, 0, 24)
+BorderBtns.BackgroundTransparency = 1
+BorderBtns.Parent = BorderCard
+local BLayout = Instance.new("UIGridLayout", BorderBtns)
+BLayout.CellSize = UDim2.new(0.23, 0, 0, 18)
+BLayout.CellPadding = UDim2.new(0, 4, 0, 4)
+
+local themeOptions = {"รุ้ง", "แดง", "ฟ้า", "เขียว", "ส้ม", "ม่วง", "ขาว"}
+for _, opt in ipairs(themeOptions) do
+    local ob = Instance.new("TextButton")
+    ob.BackgroundColor3 = (Settings.UIBorderColor == opt) and Color3.fromRGB(0, 130, 220) or Color3.fromRGB(35, 42, 58)
+    ob.Text = opt
+    ob.TextColor3 = Color3.fromRGB(255, 255, 255)
+    ob.Font = Enum.Font.GothamBold
+    ob.TextSize = 9
+    ob.Parent = BorderBtns
+    Instance.new("UICorner", ob).CornerRadius = UDim.new(0, 4)
+
+    ob.MouseButton1Click:Connect(function()
+        for _, b in ipairs(BorderBtns:GetChildren()) do
+            if b:IsA("TextButton") then b.BackgroundColor3 = Color3.fromRGB(35, 42, 58) end
+        end
+        ob.BackgroundColor3 = Color3.fromRGB(0, 130, 220)
+        Settings.UIBorderColor = opt
+        MainStroke.Color = GetColorFromTheme(opt)
+        IconStroke.Color = GetColorFromTheme(opt)
+    end)
+end
+
+-- ==================== ระบบฟาร์มแม่นยำ (วาร์ปไป -> รอ 1 วินาที -> บินช้ากลับ / วิ่ง 250 แท้จริงกลับ) ====================
+local function StopMovingImmediately()
+    local char = LocalPlayer.Character
+    if char then
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+        if hum then
+            hum.WalkSpeed = Settings.WalkSpeed
+            if hrp then
+                hrp.AssemblyLinearVelocity = Vector3.zero
+                hum:MoveTo(hrp.Position)
+            end
+        end
+    end
+    isMoving = false
+end
+
+FarmAllBtn.MouseButton1Click:Connect(function()
+    Settings.AutoFarmAll = not Settings.AutoFarmAll
+    if Settings.AutoFarmAll then
+        Settings.AutoFarmRareOnly = false
+        FarmRareBtn.BackgroundColor3 = Color3.fromRGB(30, 35, 48)
+        FarmAllBtn.BackgroundColor3 = Color3.fromRGB(46, 204, 113)
+        local char = LocalPlayer.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        if hrp then Settings.HomeCFrame = hrp.CFrame end
+    else
+        FarmAllBtn.BackgroundColor3 = Color3.fromRGB(30, 35, 48)
+        StopMovingImmediately()
+    end
+end)
+
+FarmRareBtn.MouseButton1Click:Connect(function()
+    Settings.AutoFarmRareOnly = not Settings.AutoFarmRareOnly
+    if Settings.AutoFarmRareOnly then
+        Settings.AutoFarmAll = false
+        FarmAllBtn.BackgroundColor3 = Color3.fromRGB(30, 35, 48)
+        FarmRareBtn.BackgroundColor3 = Color3.fromRGB(218, 165, 32)
+        local char = LocalPlayer.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        if hrp then Settings.HomeCFrame = hrp.CFrame end
+    else
+        FarmRareBtn.BackgroundColor3 = Color3.fromRGB(30, 35, 48)
+        StopMovingImmediately()
+    end
+end)
+
+local function TriggerGrabEgg(targetPart)
+    pcall(function()
+        for _, desc in ipairs(workspace:GetDescendants()) do
+            if desc:IsA("ProximityPrompt") and desc.Parent then
+                local pPos = desc.Parent:IsA("BasePart") and desc.Parent.Position or (desc.Parent:IsA("Model") and desc.Parent:GetPivot().Position)
+                if pPos and (pPos - targetPart.Position).Magnitude < 30 then
+                    if fireproximityprompt then fireproximityprompt(desc) end
+                    desc:InputHoldBegin()
+                    task.wait(desc.HoldDuration > 0 and (desc.HoldDuration + 0.05) or 0.1)
+                    desc:InputHoldEnd()
+                end
+            end
+        end
+
+        local char = LocalPlayer.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        if hrp and firetouchinterest then
+            firetouchinterest(hrp, targetPart, 0)
+            task.wait(0.04)
+            firetouchinterest(hrp, targetPart, 1)
+        end
+
+        if VirtualInputManager then
+            VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
+            task.wait(0.08)
+            VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+        end
+    end)
+end
+
+local function ExecuteFarmMovement(targetPart, eggObj)
+    if isMoving then return end
+    isMoving = true
+
+    local char = LocalPlayer.Character
+    if not char or not char:FindFirstChild("HumanoidRootPart") or not char:FindFirstChildOfClass("Humanoid") then
+        isMoving = false
+        return
+    end
+
+    local rootPart = char.HumanoidRootPart
+    local humanoid = char:FindFirstChildOfClass("Humanoid")
+
+    if not Settings.HomeCFrame then
+        Settings.HomeCFrame = rootPart.CFrame
+    end
+    local homeCFrame = Settings.HomeCFrame
+    local homePos = homeCFrame.Position
+
+    -- 1. วาร์ปไปหาไข่ฟองนั้นทันที
+    rootPart.CFrame = targetPart.CFrame + Vector3.new(0, 3, 0)
+    rootPart.AssemblyLinearVelocity = Vector3.zero
+
+    -- 2. รอก่อน 1 วินาทีเต็ม แล้วค่อยเก็บไข่ (เพื่อกันระบบเกมขึ้นแจ้งเตือนว่าวาป)
+    task.wait(1.0)
+    TriggerGrabEgg(targetPart)
+    task.wait(0.2)
+
+    -- 3. เดินทางกลับตามโหมดที่เลือก (ไม่มีการวาร์ปกลับเด็ดขาด)
+    if Settings.FarmMode == "บิน" then
+        -- โหมดบิน: บินกลับด้วยความเร็วที่ปลอดภัย (SafeFlySpeed = 150) นุ่มนวล ไม่โดนเตือนว่าวาป
+        local flyNoclip = RunService.Stepped:Connect(function()
+            if char and char.Parent then
+                for _, part in ipairs(char:GetDescendants()) do
+                    if part:IsA("BasePart") then part.CanCollide = false end
+                end
+            end
+        end)
+
+        local startCF = rootPart.CFrame
+        local dist = (startCF.Position - homePos).Magnitude
+        local duration = math.clamp(dist / Settings.SafeFlySpeed, 0.8, 12)
+        local startT = tick()
+
+        while tick() - startT < duration do
+            if not (Settings.AutoFarmAll or Settings.AutoFarmRareOnly) and not isMoving then break end
+            local alpha = (tick() - startT) / duration
+            rootPart.CFrame = startCF:Lerp(homeCFrame, alpha)
+            RunService.RenderStepped:Wait()
+        end
+
+        flyNoclip:Disconnect()
+        rootPart.CFrame = homeCFrame
+        rootPart.AssemblyLinearVelocity = Vector3.zero
+
+    else
+        -- โหมดวิ่ง: วิ่งกลับด้วยเท้าบนพื้นแท้จริง (Humanoid:MoveTo + WalkSpeed 250) ไม่บิน ไม่ใช้ CFrame Lerp
+        local runNoclip = RunService.Stepped:Connect(function()
+            if char and char.Parent then
+                for _, part in ipairs(char:GetDescendants()) do
+                    if part:IsA("BasePart") then part.CanCollide = false end
+                end
+            end
+        end)
+
+        humanoid.WalkSpeed = Settings.FarmRunSpeed -- ตั้งความเร็ววิ่ง 250
+        local distToHome = (rootPart.Position - homePos).Magnitude
+        local maxWaitHome = math.clamp(distToHome / 180 + 5, 6, 35)
+        local startRet = tick()
+
+        while (rootPart.Position - homePos).Magnitude > 5 do
+            if not (Settings.AutoFarmAll or Settings.AutoFarmRareOnly) and not isMoving then break end
+            if tick() - startRet > maxWaitHome then break end
+
+            humanoid:MoveTo(homePos)
+            task.wait(0.04)
+        end
+
+        runNoclip:Disconnect()
+        rootPart.AssemblyLinearVelocity = Vector3.zero
+        humanoid.WalkSpeed = Settings.WalkSpeed
+    end
+
+    isMoving = false
+end
+
+-- ==================== ESP & Egg Management ====================
+local function CleanEggESP(obj)
+    if TrackedEggs[obj] then
+        if TrackedEggs[obj].Highlight then TrackedEggs[obj].Highlight:Destroy() end
+        if TrackedEggs[obj].Billboard then TrackedEggs[obj].Billboard:Destroy() end
+        if TrackedEggs[obj].ListUI then TrackedEggs[obj].ListUI:Destroy() end
+        TrackedEggs[obj] = nil
+    end
+end
+
+local function ApplyEggESP(obj)
+    if TrackedEggs[obj] then return end
+    if not IsValidGroundEgg(obj) then return end
+
+    local targetPart = GetPrimaryPart(obj)
+    if not targetPart then return end
+
+    local eggScore = GetEggValueAndRarity(obj.Name, obj:GetDescendants())
+    local isHigh = IsHighTierEgg(obj)
+
+    local highlight = Instance.new("Highlight")
+    highlight.Name = "TANGZX_Highlight"
+    highlight.Adornee = obj
+    highlight.FillTransparency = 0.5
+    highlight.OutlineTransparency = 0
+    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    highlight.Parent = CoreGui
+
+    local billboard = Instance.new("BillboardGui")
+    billboard.Name = "TANGZX_Billboard"
+    billboard.Adornee = targetPart
+    billboard.Size = UDim2.new(0, 160, 0, 40)
+    billboard.StudsOffset = Vector3.new(0, 2.5, 0)
+    billboard.AlwaysOnTop = true
+    billboard.MaxDistance = Settings.MaxDistance
+    billboard.Parent = CoreGui
+
+    local textLabel = Instance.new("TextLabel")
+    textLabel.Size = UDim2.new(1, 0, 1, 0)
+    textLabel.BackgroundTransparency = 1
+    textLabel.Font = Enum.Font.GothamBold
+    textLabel.TextSize = 13
+    textLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    textLabel.TextStrokeTransparency = 0.2
+    textLabel.Parent = billboard
+
+    local listEntry = Instance.new("Frame")
+    listEntry.Size = UDim2.new(1, 0, 0, 32)
+    listEntry.BackgroundColor3 = Color3.fromRGB(24, 28, 38)
+    listEntry.LayoutOrder = -eggScore
+    listEntry.Parent = EggScroll
+    Instance.new("UICorner", listEntry).CornerRadius = UDim.new(0, 6)
+
+    local nameLabel = Instance.new("TextLabel")
+    nameLabel.Size = UDim2.new(0.62, 0, 1, 0)
+    nameLabel.Position = UDim2.new(0, 8, 0, 0)
+    nameLabel.Text = obj.Name
+    nameLabel.TextColor3 = isHigh and Color3.fromRGB(255, 215, 0) or Color3.fromRGB(255, 255, 255)
+    nameLabel.Font = Enum.Font.GothamMedium
+    nameLabel.TextSize = 10
+    nameLabel.TextXAlignment = Enum.TextXAlignment.Left
+    nameLabel.BackgroundTransparency = 1
+    nameLabel.Parent = listEntry
+
+    local tpBtn = Instance.new("TextButton")
+    tpBtn.Size = UDim2.new(0.33, 0, 0.72, 0)
+    tpBtn.Position = UDim2.new(0.64, 0, 0.14, 0)
+    tpBtn.BackgroundColor3 = isHigh and Color3.fromRGB(218, 165, 32) or Color3.fromRGB(46, 204, 113)
+    tpBtn.Text = "เก็บไข่"
+    tpBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    tpBtn.Font = Enum.Font.GothamBold
+    tpBtn.TextSize = 10
+    tpBtn.Parent = listEntry
+    Instance.new("UICorner", tpBtn).CornerRadius = UDim.new(0, 4)
+
+    tpBtn.MouseButton1Click:Connect(function()
+        if targetPart and targetPart.Parent and IsValidGroundEgg(obj) then
+            task.spawn(function() ExecuteFarmMovement(targetPart, obj) end)
+        end
+    end)
+
+    TrackedEggs[obj] = {
+        TargetPart = targetPart,
+        Highlight = highlight,
+        Billboard = billboard,
+        TextLabel = textLabel,
+        ListUI = listEntry,
+        Score = eggScore,
+        IsHigh = isHigh
+    }
+end
+
+for _, v in ipairs(workspace:GetDescendants()) do
+    if IsValidGroundEgg(v) then ApplyEggESP(v) end
+end
+
+local addedConn = workspace.DescendantAdded:Connect(function(v)
+    task.wait(0.1)
+    if IsValidGroundEgg(v) then ApplyEggESP(v) end
+end)
+
+local removingConn = workspace.DescendantRemoving:Connect(function(v)
+    CleanEggESP(v)
+end)
+
+-- ==================== Heartbeat Loop ====================
+local heartbeatConn = RunService.Heartbeat:Connect(function()
+    pcall(function()
+        local rainbow = Color3.fromHSV(tick() % 4 / 4, 1, 1)
+        if Settings.UIBorderColor == "รุ้ง" then
+            MainStroke.Color = rainbow
+            IconStroke.Color = rainbow
+        end
+
+        local chosenESPColor = rainbow
+        if Settings.ESPColorMode == "แดง" then
+            chosenESPColor = Color3.fromRGB(255, 45, 45)
+        elseif Settings.ESPColorMode == "น้ำเงิน" then
+            chosenESPColor = Color3.fromRGB(0, 162, 255)
+        end
+
+        local char = LocalPlayer.Character
+        local rootPart = char and char:FindFirstChild("HumanoidRootPart")
+
+        -- 1. Auto Farm All
+        if Settings.AutoFarmAll and not isFarming and not isMoving then
+            isFarming = true
+            task.spawn(function()
+                while Settings.AutoFarmAll do
+                    local bestTarget = nil
+                    local bestEggObj = nil
+                    local highestScore = -1
+
+                    for obj, data in pairs(TrackedEggs) do
+                        if obj and obj.Parent and IsValidGroundEgg(obj) and data.TargetPart and data.TargetPart.Parent then
+                            if data.Score > highestScore then
+                                highestScore = data.Score
+                                bestTarget = data.TargetPart
+                                bestEggObj = obj
+                            end
+                        else
+                            CleanEggESP(obj)
+                        end
+                    end
+
+                    if bestTarget and Settings.AutoFarmAll then
+                        ExecuteFarmMovement(bestTarget, bestEggObj)
+                        task.wait(0.2)
+                    else
+                        task.wait(0.8)
+                    end
+                end
+                isFarming = false
+            end)
+        end
+
+        -- 2. Auto Farm Rare Only
+        if Settings.AutoFarmRareOnly and not isFarming and not isMoving then
+            isFarming = true
+            task.spawn(function()
+                while Settings.AutoFarmRareOnly do
+                    local bestTarget = nil
+                    local bestEggObj = nil
+                    local highestScore = 0
+
+                    for obj, data in pairs(TrackedEggs) do
+                        if obj and obj.Parent and IsValidGroundEgg(obj) and data.TargetPart and data.TargetPart.Parent then
+                            if data.IsHigh and data.Score > highestScore then
+                                highestScore = data.Score
+                                bestTarget = data.TargetPart
+                                bestEggObj = obj
+                            end
+                        else
+                            CleanEggESP(obj)
+                        end
+                    end
+
+                    if bestTarget and Settings.AutoFarmRareOnly then
+                        ExecuteFarmMovement(bestTarget, bestEggObj)
+                        task.wait(0.2)
+                    else
+                        task.wait(0.8)
+                    end
+                end
+                isFarming = false
+            end)
+        end
+
+        -- 3. Auto Place & Hatch
+        if Settings.AutoPlaceEggs then
+            pcall(function()
+                local backpack = LocalPlayer:FindFirstChild("Backpack")
+                local humanoid = char and char:FindFirstChildOfClass("Humanoid")
+                if backpack and humanoid then
+                    for _, item in ipairs(backpack:GetChildren()) do
+                        if item:IsA("Tool") and (string.find(string.lower(item.Name), "egg") or string.find(string.lower(item.Name), "ไข่")) then
+                            humanoid:EquipTool(item)
+                            task.wait(0.05)
+                            break
+                        end
+                    end
+                end
+                for _, prompt in ipairs(workspace:GetDescendants()) do
+                    if prompt:IsA("ProximityPrompt") then
+                        local pText = string.lower(prompt.ActionText .. " " .. prompt.ObjectText .. " " .. prompt.Name)
+                        if string.find(pText, "place") or string.find(pText, "วาง") or string.find(pText, "garden") then
+                            if fireproximityprompt then fireproximityprompt(prompt) end
+                        end
+                    end
+                end
+            end)
+        end
+
+        if Settings.AutoHatchEggs then
+            pcall(function()
+                for _, prompt in ipairs(workspace:GetDescendants()) do
+                    if prompt:IsA("ProximityPrompt") then
+                        local pText = string.lower(prompt.ActionText .. " " .. prompt.ObjectText .. " " .. prompt.Name)
+                        if string.find(pText, "hatch") or string.find(pText, "ฟัก") then
+                            if fireproximityprompt then fireproximityprompt(prompt) end
+                        end
+                    end
+                end
+            end)
+        end
+
+        -- 4. ESP Update
+        for obj, data in pairs(TrackedEggs) do
+            if not obj or not obj.Parent or not IsValidGroundEgg(obj) or not data.TargetPart or not data.TargetPart.Parent then
+                CleanEggESP(obj)
+            else
+                local shouldShow = Settings.ESPEnabled
+                if Settings.RareOnly and not data.IsHigh then
+                    shouldShow = false
+                end
+
+                data.Highlight.Enabled = shouldShow
+                data.Billboard.Enabled = shouldShow
+
+                if shouldShow then
+                    data.Highlight.OutlineColor = chosenESPColor
+                    data.Highlight.FillColor = chosenESPColor
+
+                    local dist = 0
+                    if rootPart then
+                        dist = math.floor((rootPart.Position - data.TargetPart.Position).Magnitude)
+                    end
+
+                    local displayText = ""
+                    if Settings.ShowName then
+                        displayText = data.IsHigh and ("⭐ " .. obj.Name) or obj.Name
+                    end
+
+                    if Settings.ShowDistance then
+                        if displayText ~= "" then
+                            displayText = displayText .. " \n[" .. tostring(dist) .. "m]"
+                        else
+                            displayText = "[" .. tostring(dist) .. "m]"
+                        end
+                    end
+
+                    data.TextLabel.Text = displayText
+                    data.TextLabel.TextColor3 = chosenESPColor
+                end
+            end
+        end
+    end)
+end)
+
+-- Cleanup
+if getgenv then
+    getgenv().TANG_ZX_HUB_CLEANUP = function()
+        if addedConn then addedConn:Disconnect() end
+        if removingConn then removingConn:Disconnect() end
+        if heartbeatConn then heartbeatConn:Disconnect() end
+        if globalNoclipConn then globalNoclipConn:Disconnect() end
+        StopMovingImmediately()
+        for obj, _ in pairs(TrackedEggs) do CleanEggESP(obj) end
+        if ScreenGui then ScreenGui:Destroy() end
+    end
+end
