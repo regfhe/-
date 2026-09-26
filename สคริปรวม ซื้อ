@@ -1,0 +1,1119 @@
+
+-- ==========================================
+-- สคริปรวม | TZX (Custom Modern UI Edition)
+-- พัฒนาโดย TANG ZX
+-- ==========================================
+
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+local TeleportService = game:GetService("TeleportService")
+local LocalPlayer = Players.LocalPlayer
+
+-- ป้องกัน Gui หลุดหรือซ้ำ
+local ParentGui
+pcall(function()
+    if gethui then
+        ParentGui = gethui()
+    else
+        ParentGui = game:GetService("CoreGui")
+    end
+end)
+if not ParentGui then
+    ParentGui = LocalPlayer:WaitForChild("PlayerGui")
+end
+
+if ParentGui:FindFirstChild("TZX_CustomHub") then
+    ParentGui.TZX_CustomHub:Destroy()
+end
+
+---------------------------------------------------------
+-- ตัวแปรระบบ HITBOX & ESP
+---------------------------------------------------------
+local isHitboxEnabled = false
+local defaultSize = Vector3.new(2, 2, 1)
+local currentSizeNumber = 15
+local expandedSize = Vector3.new(currentSizeNumber, currentSizeNumber, currentSizeNumber)
+local currentHitboxColor = Color3.fromRGB(255, 0, 0)
+
+local isEspName = false
+local isEspDistance = false
+local isEspHealth = false
+
+local isNoclip = false
+local isInfJump = false
+local isAntiAfk = false
+local currentSpeed = 16
+local currentJump = 50
+
+-- ตัวแปร Settings
+local isRainbowBorder = false
+local baseWidth = 580
+local baseHeight = 360
+
+---------------------------------------------------------
+-- ฟังก์ชัน HITBOX EXPANDER
+---------------------------------------------------------
+local function applyHitbox()
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then
+            pcall(function()
+                local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+                if hrp then
+                    if isHitboxEnabled then
+                        hrp.Size = expandedSize
+                        hrp.Transparency = 0.5 
+                        hrp.Color = currentHitboxColor
+                        hrp.Material = Enum.Material.Neon 
+                        hrp.CanCollide = false
+                    else
+                        hrp.Size = defaultSize
+                        hrp.Transparency = 1
+                        hrp.Material = Enum.Material.Plastic
+                    end
+                end
+            end)
+        end
+    end
+end
+
+---------------------------------------------------------
+-- ฟังก์ชัน ESP
+---------------------------------------------------------
+local function applyESP(player)
+    if player == LocalPlayer then return end
+
+    local function setupChar(char)
+        if not char then return end
+        local hrp = char:WaitForChild("HumanoidRootPart", 5)
+        local head = char:WaitForChild("Head", 5)
+        local humanoid = char:WaitForChild("Humanoid", 5)
+        if not hrp or not head or not humanoid then return end
+
+        local gui = head:FindFirstChild("ESPTextGui")
+        if not gui then
+            gui = Instance.new("BillboardGui")
+            gui.Name = "ESPTextGui"
+            gui.Adornee = head
+            gui.Size = UDim2.new(0, 200, 0, 50)
+            gui.StudsOffset = Vector3.new(0, 3, 0)
+            gui.AlwaysOnTop = true
+            
+            local label = Instance.new("TextLabel")
+            label.Name = "InfoLabel"
+            label.Size = UDim2.new(1, 0, 1, 0)
+            label.BackgroundTransparency = 1
+            label.TextColor3 = Color3.fromRGB(255, 255, 255)
+            label.TextStrokeTransparency = 0
+            label.TextSize = 14
+            label.Font = Enum.Font.GothamBold
+            label.Parent = gui
+            gui.Parent = head
+        end
+
+        gui.Enabled = (isEspName or isEspDistance or isEspHealth)
+
+        task.spawn(function()
+            while char and char.Parent and head and head.Parent do
+                if gui.Enabled then
+                    local label = gui:FindFirstChild("InfoLabel")
+                    if label then
+                        local textStr = ""
+                        if isEspName then textStr = textStr .. "👤 " .. player.DisplayName .. "\n" end
+                        if isEspDistance and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+                            local dist = math.floor((LocalPlayer.Character.HumanoidRootPart.Position - hrp.Position).Magnitude)
+                            textStr = textStr .. "📏 [" .. dist .. "m] "
+                        end
+                        if isEspHealth and humanoid then
+                            textStr = textStr .. "❤️ " .. math.floor(humanoid.Health) .. "/" .. math.floor(humanoid.MaxHealth)
+                        end
+                        label.Text = textStr
+                    end
+                end
+                task.wait(0.1)
+            end
+        end)
+    end
+
+    if player.Character then setupChar(player.Character) end
+    player.CharacterAdded:Connect(setupChar)
+end
+
+local function refreshAllESP()
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then applyESP(player) end
+    end
+end
+Players.PlayerAdded:Connect(applyESP)
+
+---------------------------------------------------------
+-- ลูปทำงานเบื้องหลัง
+---------------------------------------------------------
+RunService.Stepped:Connect(function()
+    if isNoclip and LocalPlayer.Character then
+        for _, part in ipairs(LocalPlayer.Character:GetDescendants()) do
+            if part:IsA("BasePart") then
+                part.CanCollide = false
+            end
+        end
+    end
+end)
+
+UserInputService.JumpRequest:Connect(function()
+    if isInfJump and LocalPlayer.Character then
+        local humanoid = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+        if humanoid then
+            humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+        end
+    end
+end)
+
+LocalPlayer.Idled:Connect(function()
+    if isAntiAfk then
+        local VirtualUser = game:GetService("VirtualUser")
+        VirtualUser:CaptureController()
+        VirtualUser:ClickButton2(Vector2.new())
+    end
+end)
+
+task.spawn(function()
+    while task.wait(0.2) do
+        if isHitboxEnabled then applyHitbox() end
+        pcall(function()
+            if LocalPlayer.Character then
+                local humanoid = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+                if humanoid then
+                    humanoid.WalkSpeed = currentSpeed
+                    humanoid.UseJumpPower = true
+                    humanoid.JumpPower = currentJump
+                end
+            end
+        end)
+    end
+end)
+
+local function runExternal(url)
+    task.spawn(function()
+        local success, err = pcall(function()
+            loadstring(game:HttpGet(url))()
+        end)
+        if not success then
+            warn("[TZX Error]:", err)
+        end
+    end)
+end
+
+---------------------------------------------------------
+-- สร้างหน้าต่าง GUI
+---------------------------------------------------------
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "TZX_CustomHub"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+ScreenGui.Parent = ParentGui
+
+-- กรอบหลัก (Main Window)
+local MainFrame = Instance.new("Frame")
+MainFrame.Name = "MainFrame"
+MainFrame.Size = UDim2.new(0, baseWidth, 0, baseHeight)
+MainFrame.Position = UDim2.new(0.5, -baseWidth / 2, 0.5, -baseHeight / 2)
+MainFrame.BackgroundColor3 = Color3.fromRGB(15, 20, 28)
+MainFrame.BorderSizePixel = 0
+MainFrame.Active = true
+MainFrame.ClipsDescendants = false
+MainFrame.Parent = ScreenGui
+
+local MainCorner = Instance.new("UICorner")
+MainCorner.CornerRadius = UDim.new(0, 12)
+MainCorner.Parent = MainFrame
+
+-- เส้นขอบหน้าต่าง (UIStroke)
+local MainStroke = Instance.new("UIStroke")
+MainStroke.Thickness = 2
+MainStroke.Color = Color3.fromRGB(255, 35, 35)
+MainStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+MainStroke.Parent = MainFrame
+
+-- Rainbow Border Updater
+RunService.RenderStepped:Connect(function()
+    if isRainbowBorder then
+        local hue = (tick() * 0.5) % 1
+        MainStroke.Color = Color3.fromHSV(hue, 0.85, 1)
+    end
+end)
+
+-- ระบบลากหน้าต่าง
+local dragging, dragInput, dragStart, startPos
+local function updateDrag(input)
+    local delta = input.Position - dragStart
+    MainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+end
+MainFrame.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = true
+        dragStart = input.Position
+        startPos = MainFrame.Position
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                dragging = false
+            end
+        end)
+    end
+end)
+MainFrame.InputChanged:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+        dragInput = input
+    end
+end)
+UserInputService.InputChanged:Connect(function(input)
+    if input == dragInput and dragging then
+        updateDrag(input)
+    end
+end)
+
+-- Topbar (แถบด้านบน ปรับมุมโค้งไม่ให้แลบเกินขอบ)
+local Topbar = Instance.new("Frame")
+Topbar.Name = "Topbar"
+Topbar.Size = UDim2.new(1, 0, 0, 42)
+Topbar.BackgroundColor3 = Color3.fromRGB(10, 14, 20)
+Topbar.BorderSizePixel = 0
+Topbar.Parent = MainFrame
+
+local TopbarCorner = Instance.new("UICorner")
+TopbarCorner.CornerRadius = UDim.new(0, 12)
+TopbarCorner.Parent = Topbar
+
+local TopbarBottomCover = Instance.new("Frame")
+TopbarBottomCover.Size = UDim2.new(1, 0, 0, 12)
+TopbarBottomCover.Position = UDim2.new(0, 0, 1, -12)
+TopbarBottomCover.BackgroundColor3 = Topbar.BackgroundColor3
+TopbarBottomCover.BorderSizePixel = 0
+TopbarBottomCover.Parent = Topbar
+
+local TitleLabel = Instance.new("TextLabel")
+TitleLabel.Name = "TitleLabel"
+TitleLabel.Size = UDim2.new(0, 260, 1, 0)
+TitleLabel.Position = UDim2.new(0, 14, 0, 0)
+TitleLabel.BackgroundTransparency = 1
+TitleLabel.Font = Enum.Font.GothamBold
+TitleLabel.Text = "สคริปรวม | TZX 🇹🇭"
+TitleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+TitleLabel.TextSize = 15
+TitleLabel.TextXAlignment = Enum.TextXAlignment.Left
+TitleLabel.Parent = Topbar
+
+local SubtitleLabel = Instance.new("TextLabel")
+SubtitleLabel.Name = "SubtitleLabel"
+SubtitleLabel.Size = UDim2.new(0, 180, 1, 0)
+SubtitleLabel.Position = UDim2.new(0, 145, 0, 0)
+SubtitleLabel.BackgroundTransparency = 1
+SubtitleLabel.Font = Enum.Font.Gotham
+SubtitleLabel.Text = "| พัฒนาโดย TANG ZX"
+SubtitleLabel.TextColor3 = Color3.fromRGB(140, 150, 165)
+SubtitleLabel.TextSize = 12
+SubtitleLabel.TextXAlignment = Enum.TextXAlignment.Left
+SubtitleLabel.Parent = Topbar
+
+-- ปุ่มย่อ (Minimize)
+local MinBtn = Instance.new("TextButton")
+MinBtn.Name = "MinBtn"
+MinBtn.Size = UDim2.new(0, 28, 0, 28)
+MinBtn.Position = UDim2.new(1, -68, 0, 7)
+MinBtn.BackgroundColor3 = Color3.fromRGB(24, 30, 42)
+MinBtn.Font = Enum.Font.GothamBold
+MinBtn.Text = "—"
+MinBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
+MinBtn.TextSize = 13
+MinBtn.BorderSizePixel = 0
+MinBtn.Parent = Topbar
+
+local MinBtnCorner = Instance.new("UICorner")
+MinBtnCorner.CornerRadius = UDim.new(0, 6)
+MinBtnCorner.Parent = MinBtn
+
+-- ปุ่มปิด (Close)
+local CloseBtn = Instance.new("TextButton")
+CloseBtn.Name = "CloseBtn"
+CloseBtn.Size = UDim2.new(0, 28, 0, 28)
+CloseBtn.Position = UDim2.new(1, -35, 0, 7)
+CloseBtn.BackgroundColor3 = Color3.fromRGB(200, 40, 40)
+CloseBtn.Font = Enum.Font.GothamBold
+CloseBtn.Text = "x"
+CloseBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+CloseBtn.TextSize = 13
+CloseBtn.BorderSizePixel = 0
+CloseBtn.Parent = Topbar
+
+local CloseBtnCorner = Instance.new("UICorner")
+CloseBtnCorner.CornerRadius = UDim.new(0, 6)
+CloseBtnCorner.Parent = CloseBtn
+
+CloseBtn.MouseButton1Click:Connect(function()
+    ScreenGui:Destroy()
+end)
+
+-- Sidebar (แถบข้างพร้อมแก้ขอบล่างซ้ายโค้งรับตัวเมนู)
+local Sidebar = Instance.new("Frame")
+Sidebar.Name = "Sidebar"
+Sidebar.Size = UDim2.new(0, 140, 1, -42)
+Sidebar.Position = UDim2.new(0, 0, 0, 42)
+Sidebar.BackgroundColor3 = Color3.fromRGB(12, 16, 23)
+Sidebar.BorderSizePixel = 0
+Sidebar.Parent = MainFrame
+
+local SidebarCorner = Instance.new("UICorner")
+SidebarCorner.CornerRadius = UDim.new(0, 12)
+SidebarCorner.Parent = Sidebar
+
+local SidebarCoverTop = Instance.new("Frame")
+SidebarCoverTop.Size = UDim2.new(1, 0, 0, 12)
+SidebarCoverTop.BackgroundColor3 = Sidebar.BackgroundColor3
+SidebarCoverTop.BorderSizePixel = 0
+SidebarCoverTop.Parent = Sidebar
+
+local SidebarCoverRight = Instance.new("Frame")
+SidebarCoverRight.Size = UDim2.new(0, 12, 1, 0)
+SidebarCoverRight.Position = UDim2.new(1, -12, 0, 0)
+SidebarCoverRight.BackgroundColor3 = Sidebar.BackgroundColor3
+SidebarCoverRight.BorderSizePixel = 0
+SidebarCoverRight.Parent = Sidebar
+
+local TabButtonHolder = Instance.new("ScrollingFrame")
+TabButtonHolder.Name = "TabButtonHolder"
+TabButtonHolder.Size = UDim2.new(1, -6, 1, -10)
+TabButtonHolder.Position = UDim2.new(0, 3, 0, 5)
+TabButtonHolder.BackgroundTransparency = 1
+TabButtonHolder.BorderSizePixel = 0
+TabButtonHolder.ScrollBarThickness = 2
+TabButtonHolder.CanvasSize = UDim2.new(0, 0, 0, 0)
+TabButtonHolder.Parent = Sidebar
+
+local TabListLayout = Instance.new("UIListLayout")
+TabListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+TabListLayout.Padding = UDim.new(0, 4)
+TabListLayout.Parent = TabButtonHolder
+
+TabListLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+    TabButtonHolder.CanvasSize = UDim2.new(0, 0, 0, TabListLayout.AbsoluteContentSize.Y + 10)
+end)
+
+-- ขอบเขตแสดงเนื้อหาด้านขวา
+local ContentHolder = Instance.new("Frame")
+ContentHolder.Name = "ContentHolder"
+ContentHolder.Size = UDim2.new(1, -148, 1, -48)
+ContentHolder.Position = UDim2.new(0, 144, 0, 44)
+ContentHolder.BackgroundTransparency = 1
+ContentHolder.Parent = MainFrame
+
+---------------------------------------------------------
+-- ปุ่มไอคอนลอยตอนย่อ (Floating Money Icon)
+---------------------------------------------------------
+local FloatingIcon = Instance.new("ImageButton")
+FloatingIcon.Name = "TZX_FloatingIcon"
+FloatingIcon.Size = UDim2.new(0, 48, 0, 48)
+FloatingIcon.Position = UDim2.new(0.08, 0, 0.25, 0)
+FloatingIcon.BackgroundColor3 = Color3.fromRGB(15, 20, 28)
+FloatingIcon.BorderSizePixel = 0
+FloatingIcon.Visible = false
+FloatingIcon.Active = true
+FloatingIcon.Parent = ScreenGui
+
+local IconCorner = Instance.new("UICorner")
+IconCorner.CornerRadius = UDim.new(0, 10)
+IconCorner.Parent = FloatingIcon
+
+local IconStroke = Instance.new("UIStroke")
+IconStroke.Thickness = 2
+IconStroke.Color = Color3.fromRGB(255, 35, 35)
+IconStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+IconStroke.Parent = FloatingIcon
+
+local MoneyIconText = Instance.new("TextLabel")
+MoneyIconText.Size = UDim2.new(1, 0, 1, 0)
+MoneyIconText.BackgroundTransparency = 1
+MoneyIconText.Font = Enum.Font.GothamBold
+MoneyIconText.Text = "💵"
+MoneyIconText.TextSize = 24
+MoneyIconText.Parent = FloatingIcon
+
+-- ลากไอคอนเงินได้
+local fDragging, fDragInput, fDragStart, fStartPos
+FloatingIcon.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        fDragging = true
+        fDragStart = input.Position
+        fStartPos = FloatingIcon.Position
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                fDragging = false
+            end
+        end)
+    end
+end)
+FloatingIcon.InputChanged:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+        fDragInput = input
+    end
+end)
+UserInputService.InputChanged:Connect(function(input)
+    if input == fDragInput and fDragging then
+        local delta = input.Position - fDragStart
+        FloatingIcon.Position = UDim2.new(fStartPos.X.Scale, fStartPos.X.Offset + delta.X, fStartPos.Y.Scale, fStartPos.Y.Offset + delta.Y)
+    end
+end)
+
+MinBtn.MouseButton1Click:Connect(function()
+    MainFrame.Visible = false
+    FloatingIcon.Visible = true
+end)
+
+FloatingIcon.MouseButton1Click:Connect(function()
+    FloatingIcon.Visible = false
+    MainFrame.Visible = true
+end)
+
+---------------------------------------------------------
+-- ระบบสร้าง Tab และองค์ประกอบเมนู
+---------------------------------------------------------
+local tabs = {}
+local function createTab(tabName, iconText)
+    local Page = Instance.new("ScrollingFrame")
+    Page.Name = tabName .. "_Page"
+    Page.Size = UDim2.new(1, -6, 1, 0)
+    Page.Position = UDim2.new(0, 0, 0, 0)
+    Page.BackgroundTransparency = 1
+    Page.BorderSizePixel = 0
+    Page.ScrollBarThickness = 3
+    Page.ScrollBarImageColor3 = Color3.fromRGB(255, 35, 35)
+    Page.Visible = false
+    Page.Parent = ContentHolder
+
+    local Layout = Instance.new("UIListLayout")
+    Layout.SortOrder = Enum.SortOrder.LayoutOrder
+    Layout.Padding = UDim.new(0, 6)
+    Layout.Parent = Page
+
+    Layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+        Page.CanvasSize = UDim2.new(0, 0, 0, Layout.AbsoluteContentSize.Y + 15)
+    end)
+
+    local TabBtn = Instance.new("TextButton")
+    TabBtn.Name = tabName .. "_TabBtn"
+    TabBtn.Size = UDim2.new(1, 0, 0, 36)
+    TabBtn.BackgroundColor3 = Color3.fromRGB(15, 20, 28)
+    TabBtn.BorderSizePixel = 0
+    TabBtn.Font = Enum.Font.GothamMedium
+    TabBtn.Text = (iconText or "") .. " " .. tabName
+    TabBtn.TextColor3 = Color3.fromRGB(170, 180, 195)
+    TabBtn.TextSize = 12
+    TabBtn.TextXAlignment = Enum.TextXAlignment.Left
+    TabBtn.Parent = TabButtonHolder
+
+    local BtnPadding = Instance.new("UIPadding")
+    BtnPadding.PaddingLeft = UDim.new(0, 10)
+    BtnPadding.Parent = TabBtn
+
+    local TabCorner = Instance.new("UICorner")
+    TabCorner.CornerRadius = UDim.new(0, 6)
+    TabCorner.Parent = TabBtn
+
+    local function selectThisTab()
+        for _, t in pairs(tabs) do
+            t.Page.Visible = false
+            t.Button.BackgroundColor3 = Color3.fromRGB(15, 20, 28)
+            t.Button.TextColor3 = Color3.fromRGB(170, 180, 195)
+        end
+        Page.Visible = true
+        TabBtn.BackgroundColor3 = Color3.fromRGB(35, 110, 240)
+        TabBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    end
+
+    TabBtn.MouseButton1Click:Connect(selectThisTab)
+
+    local tabObj = { Page = Page, Button = TabBtn, Layout = Layout }
+    table.insert(tabs, tabObj)
+
+    if #tabs == 1 then selectThisTab() end
+
+    local tabFunctions = {}
+
+    function tabFunctions:CreateSection(title)
+        local Sec = Instance.new("Frame")
+        Sec.Size = UDim2.new(1, -6, 0, 26)
+        Sec.BackgroundTransparency = 1
+        Sec.Parent = Page
+
+        local Label = Instance.new("TextLabel")
+        Label.Size = UDim2.new(1, 0, 1, 0)
+        Label.BackgroundTransparency = 1
+        Label.Font = Enum.Font.GothamBold
+        Label.Text = title
+        Label.TextColor3 = Color3.fromRGB(240, 100, 100)
+        Label.TextSize = 12
+        Label.TextXAlignment = Enum.TextXAlignment.Left
+        Label.Parent = Sec
+    end
+
+    function tabFunctions:CreateButton(name, callback)
+        local Btn = Instance.new("TextButton")
+        Btn.Size = UDim2.new(1, -6, 0, 32)
+        Btn.BackgroundColor3 = Color3.fromRGB(22, 28, 38)
+        Btn.BorderSizePixel = 0
+        Btn.Font = Enum.Font.GothamMedium
+        Btn.Text = name
+        Btn.TextColor3 = Color3.fromRGB(230, 230, 230)
+        Btn.TextSize = 12
+        Btn.Parent = Page
+
+        local c = Instance.new("UICorner")
+        c.CornerRadius = UDim.new(0, 6)
+        c.Parent = Btn
+
+        Btn.MouseButton1Click:Connect(function()
+            pcall(callback)
+        end)
+    end
+
+    function tabFunctions:CreateToggle(name, defaultVal, callback)
+        local state = defaultVal or false
+
+        local ToggleFrame = Instance.new("TextButton")
+        ToggleFrame.Size = UDim2.new(1, -6, 0, 34)
+        ToggleFrame.BackgroundColor3 = Color3.fromRGB(22, 28, 38)
+        ToggleFrame.BorderSizePixel = 0
+        ToggleFrame.Text = ""
+        ToggleFrame.Parent = Page
+
+        local c = Instance.new("UICorner")
+        c.CornerRadius = UDim.new(0, 6)
+        c.Parent = ToggleFrame
+
+        local Txt = Instance.new("TextLabel")
+        Txt.Size = UDim2.new(1, -60, 1, 0)
+        Txt.Position = UDim2.new(0, 10, 0, 0)
+        Txt.BackgroundTransparency = 1
+        Txt.Font = Enum.Font.GothamMedium
+        Txt.Text = name
+        Txt.TextColor3 = Color3.fromRGB(230, 230, 230)
+        Txt.TextSize = 12
+        Txt.TextXAlignment = Enum.TextXAlignment.Left
+        Txt.Parent = ToggleFrame
+
+        local Switch = Instance.new("Frame")
+        Switch.Size = UDim2.new(0, 42, 0, 20)
+        Switch.Position = UDim2.new(1, -48, 0.5, -10)
+        Switch.BackgroundColor3 = state and Color3.fromRGB(35, 110, 240) or Color3.fromRGB(45, 50, 60)
+        Switch.BorderSizePixel = 0
+        Switch.Parent = ToggleFrame
+
+        local sc = Instance.new("UICorner")
+        sc.CornerRadius = UDim.new(1, 0)
+        sc.Parent = Switch
+
+        local Dot = Instance.new("Frame")
+        Dot.Size = UDim2.new(0, 16, 0, 16)
+        Dot.Position = state and UDim2.new(1, -18, 0.5, -8) or UDim2.new(0, 2, 0.5, -8)
+        Dot.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+        Dot.BorderSizePixel = 0
+        Dot.Parent = Switch
+
+        local dc = Instance.new("UICorner")
+        dc.CornerRadius = UDim.new(1, 0)
+        dc.Parent = Dot
+
+        ToggleFrame.MouseButton1Click:Connect(function()
+            state = not state
+            if state then
+                Switch.BackgroundColor3 = Color3.fromRGB(35, 110, 240)
+                Dot.Position = UDim2.new(1, -18, 0.5, -8)
+            else
+                Switch.BackgroundColor3 = Color3.fromRGB(45, 50, 60)
+                Dot.Position = UDim2.new(0, 2, 0.5, -8)
+            end
+            pcall(callback, state)
+        end)
+    end
+
+    function tabFunctions:CreateSlider(name, min, max, defaultVal, callback)
+        local value = defaultVal or min
+
+        local SliderFrame = Instance.new("Frame")
+        SliderFrame.Size = UDim2.new(1, -6, 0, 44)
+        SliderFrame.BackgroundColor3 = Color3.fromRGB(22, 28, 38)
+        SliderFrame.BorderSizePixel = 0
+        SliderFrame.Parent = Page
+
+        local c = Instance.new("UICorner")
+        c.CornerRadius = UDim.new(0, 6)
+        c.Parent = SliderFrame
+
+        local Title = Instance.new("TextLabel")
+        Title.Size = UDim2.new(0.7, 0, 0, 20)
+        Title.Position = UDim2.new(0, 10, 0, 4)
+        Title.BackgroundTransparency = 1
+        Title.Font = Enum.Font.GothamMedium
+        Title.Text = name
+        Title.TextColor3 = Color3.fromRGB(230, 230, 230)
+        Title.TextSize = 11
+        Title.TextXAlignment = Enum.TextXAlignment.Left
+        Title.Parent = SliderFrame
+
+        local ValLabel = Instance.new("TextLabel")
+        ValLabel.Size = UDim2.new(0.28, 0, 0, 20)
+        ValLabel.Position = UDim2.new(0.7, 0, 0, 4)
+        ValLabel.BackgroundTransparency = 1
+        ValLabel.Font = Enum.Font.GothamBold
+        ValLabel.Text = tostring(value)
+        ValLabel.TextColor3 = Color3.fromRGB(80, 160, 255)
+        ValLabel.TextSize = 11
+        ValLabel.TextXAlignment = Enum.TextXAlignment.Right
+        ValLabel.Parent = SliderFrame
+
+        local BarBack = Instance.new("Frame")
+        BarBack.Size = UDim2.new(1, -20, 0, 8)
+        BarBack.Position = UDim2.new(0, 10, 0, 28)
+        BarBack.BackgroundColor3 = Color3.fromRGB(38, 44, 55)
+        BarBack.BorderSizePixel = 0
+        BarBack.Parent = SliderFrame
+
+        local bc = Instance.new("UICorner")
+        bc.CornerRadius = UDim.new(1, 0)
+        bc.Parent = BarBack
+
+        local Fill = Instance.new("Frame")
+        Fill.Size = UDim2.new((value - min) / (max - min), 0, 1, 0)
+        Fill.BackgroundColor3 = Color3.fromRGB(35, 110, 240)
+        Fill.BorderSizePixel = 0
+        Fill.Parent = BarBack
+
+        local fc = Instance.new("UICorner")
+        fc.CornerRadius = UDim.new(1, 0)
+        fc.Parent = Fill
+
+        local isDown = false
+        local function update(input)
+            local ratio = math.clamp((input.Position.X - BarBack.AbsolutePosition.X) / BarBack.AbsoluteSize.X, 0, 1)
+            value = math.floor(min + (max - min) * ratio)
+            Fill.Size = UDim2.new(ratio, 0, 1, 0)
+            ValLabel.Text = tostring(value)
+            pcall(callback, value)
+        end
+
+        BarBack.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                isDown = true
+                update(input)
+            end
+        end)
+        UserInputService.InputEnded:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                isDown = false
+            end
+        end)
+        UserInputService.InputChanged:Connect(function(input)
+            if isDown and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+                update(input)
+            end
+        end)
+    end
+
+    function tabFunctions:CreateInput(name, placeholder, callback)
+        local InputFrame = Instance.new("Frame")
+        InputFrame.Size = UDim2.new(1, -6, 0, 36)
+        InputFrame.BackgroundColor3 = Color3.fromRGB(22, 28, 38)
+        InputFrame.BorderSizePixel = 0
+        InputFrame.Parent = Page
+
+        local c = Instance.new("UICorner")
+        c.CornerRadius = UDim.new(0, 6)
+        c.Parent = InputFrame
+
+        local Title = Instance.new("TextLabel")
+        Title.Size = UDim2.new(0.6, 0, 1, 0)
+        Title.Position = UDim2.new(0, 10, 0, 0)
+        Title.BackgroundTransparency = 1
+        Title.Font = Enum.Font.GothamMedium
+        Title.Text = name
+        Title.TextColor3 = Color3.fromRGB(230, 230, 230)
+        Title.TextSize = 11
+        Title.TextXAlignment = Enum.TextXAlignment.Left
+        Title.Parent = InputFrame
+
+        local Box = Instance.new("TextBox")
+        Box.Size = UDim2.new(0.35, 0, 0, 24)
+        Box.Position = UDim2.new(0.63, 0, 0.5, -12)
+        Box.BackgroundColor3 = Color3.fromRGB(30, 38, 50)
+        Box.BorderSizePixel = 0
+        Box.Font = Enum.Font.Gotham
+        Box.PlaceholderText = placeholder or "พิมพ์..."
+        Box.Text = ""
+        Box.TextColor3 = Color3.fromRGB(255, 255, 255)
+        Box.TextSize = 11
+        Box.Parent = InputFrame
+
+        local bc = Instance.new("UICorner")
+        bc.CornerRadius = UDim.new(0, 4)
+        bc.Parent = Box
+
+        Box.FocusLost:Connect(function()
+            pcall(callback, Box.Text)
+        end)
+    end
+
+    function tabFunctions:CreateColorGrid(title, colorTable, callback)
+        local GridHolder = Instance.new("Frame")
+        GridHolder.Size = UDim2.new(1, -6, 0, 96)
+        GridHolder.BackgroundColor3 = Color3.fromRGB(22, 28, 38)
+        GridHolder.BorderSizePixel = 0
+        GridHolder.Parent = Page
+
+        local c = Instance.new("UICorner")
+        c.CornerRadius = UDim.new(0, 6)
+        c.Parent = GridHolder
+
+        local Title = Instance.new("TextLabel")
+        Title.Size = UDim2.new(1, -12, 0, 22)
+        Title.Position = UDim2.new(0, 10, 0, 4)
+        Title.BackgroundTransparency = 1
+        Title.Font = Enum.Font.GothamBold
+        Title.Text = title
+        Title.TextColor3 = Color3.fromRGB(230, 230, 230)
+        Title.TextSize = 12
+        Title.TextXAlignment = Enum.TextXAlignment.Left
+        Title.Parent = GridHolder
+
+        local ButtonContainer = Instance.new("Frame")
+        ButtonContainer.Size = UDim2.new(1, -20, 0, 62)
+        ButtonContainer.Position = UDim2.new(0, 10, 0, 28)
+        ButtonContainer.BackgroundTransparency = 1
+        ButtonContainer.Parent = GridHolder
+
+        local UIGrid = Instance.new("UIGridLayout")
+        UIGrid.CellSize = UDim2.new(0, 70, 0, 26)
+        UIGrid.CellPadding = UDim2.new(0, 5, 0, 5)
+        UIGrid.Parent = ButtonContainer
+
+        for _, item in ipairs(colorTable) do
+            local cBtn = Instance.new("TextButton")
+            cBtn.BackgroundColor3 = Color3.fromRGB(30, 38, 50)
+            cBtn.BorderSizePixel = 0
+            cBtn.Font = Enum.Font.GothamMedium
+            cBtn.Text = item.Name
+            cBtn.TextColor3 = item.Color or Color3.fromRGB(255, 255, 255)
+            cBtn.TextSize = 11
+            cBtn.Parent = ButtonContainer
+
+            local cCorner = Instance.new("UICorner")
+            cCorner.CornerRadius = UDim.new(0, 4)
+            cCorner.Parent = cBtn
+
+            cBtn.MouseButton1Click:Connect(function()
+                pcall(callback, item)
+            end)
+        end
+    end
+
+    return tabFunctions
+end
+
+---------------------------------------------------------
+-- แท็บและฟังก์ชันเดิมทั้งหมด
+---------------------------------------------------------
+
+-- 1. TAB: MENU
+local PlayerTab = createTab("MENU", "📘")
+PlayerTab:CreateSection("🛡️ Prevent-|-ป้องกันหลุดเกม")
+PlayerTab:CreateToggle("🛠️ AFK-|-(กันหลุดออกจากเกม)", false, function(v)
+    isAntiAfk = v
+end)
+
+PlayerTab:CreateSection("👤 Player-|-ผู้เล่น")
+PlayerTab:CreateButton("🚀 FLY-|-(บินใหม่)", function()
+    runExternal("https://pastebin.com/raw/msZrbPWs")
+end)
+
+PlayerTab:CreateButton("🕹️ WARP-|-(ปุ่มวาร์ป)", function()
+    runExternal("https://pastebin.com/raw/PhWjv7Jd")
+end)
+
+PlayerTab:CreateButton("🕳️ DISAPPEAR-|-(หายตัวบางแมพ)", function()
+    runExternal("https://pastebin.com/raw/3Rnd9rHf")
+end)
+
+PlayerTab:CreateButton("🔋 LMMORTAL-|-(อมตะบางแมพ)", function()
+    runExternal("https://raw.githubusercontent.com/wackshopr-tech/script-roblox-all/refs/heads/main/SCRIPT-ALL-BY-WACK-SHOP/GOD-MAIN/GOD-MAIN.lua")
+end)
+
+PlayerTab:CreateToggle("🧱 NOCLIP-|-(เดินทะลุกำแพง)", false, function(v)
+    isNoclip = v
+end)
+
+PlayerTab:CreateToggle("🛸 INFINITE JUMP-|-(กระโดดรัวๆ บนอากาศ)", false, function(v)
+    isInfJump = v
+end)
+
+PlayerTab:CreateSection("⚙️ Adjust settings-|-ปรับค่าต่างๆ")
+PlayerTab:CreateSlider("🏃 ADJUST WALKSPEED-|-(ปรับความเร็ววิ่ง)", 16, 300, 16, function(v)
+    currentSpeed = v
+end)
+
+PlayerTab:CreateInput("CUSTOM WALKSPEED-|-(พิมพ์เลขความเร็ว)", "เช่น 50, 100...", function(text)
+    local num = tonumber(text)
+    if num and num > 0 then currentSpeed = num end
+end)
+
+PlayerTab:CreateSlider("✈️ ADJUST JUMPPOWER-|-(ปรับแรงกระโดด)", 50, 500, 50, function(v)
+    currentJump = v
+end)
+
+PlayerTab:CreateInput("CUSTOM JUMPPOWER-|-(พิมพ์แรงกระโดด)", "เช่น 100, 200...", function(text)
+    local num = tonumber(text)
+    if num and num > 0 then currentJump = num end
+end)
+
+PlayerTab:CreateSection("⚙️ Reset-|-รีเช็ตค่าเดิม")
+PlayerTab:CreateButton("🔄 RESET-|-(รีเซ็ตค่าเดิมทั้งหมด)", function()
+    currentSpeed = 16
+    currentJump = 50
+    isNoclip = false
+    isInfJump = false
+    isAntiAfk = false
+    isHitboxEnabled = false
+    currentSizeNumber = 15
+    expandedSize = Vector3.new(15, 15, 15)
+    currentHitboxColor = Color3.fromRGB(255, 0, 0)
+    applyHitbox()
+end)
+
+-- 2. TAB: AIMBOT
+local HitboxTab = createTab("AIMBOT", "📕")
+HitboxTab:CreateSection("🔫 Headlock-|-ล็อคหัวผู้เล่น")
+HitboxTab:CreateButton("🔫 HEADLOCK-|-(ล็อคหัวผู้เล่น)", function()
+    runExternal("https://pastebin.com/raw/hGuQayuL")
+end)
+
+HitboxTab:CreateSection("🎯 Increase damage-|-ขยายดาเมจผู้เล่น")
+HitboxTab:CreateToggle("🎯 LNCREASE DAMAGE-|-(ขยายดาเมจ)", false, function(v)
+    isHitboxEnabled = v
+    applyHitbox()
+end)
+
+HitboxTab:CreateSlider("🔍 ALIGN IN PARALLEL-|-(ปรับขนาดกรอบ)", 2, 100, currentSizeNumber, function(v)
+    currentSizeNumber = v
+    expandedSize = Vector3.new(v, v, v)
+    if isHitboxEnabled then applyHitbox() end
+end)
+
+HitboxTab:CreateInput("✒️ PRINT ENLARGED-|-(พิมพ์ขนาดขยายเอง)", "เช่น 15, 30...", function(text)
+    local num = tonumber(text)
+    if num and num > 0 then
+        currentSizeNumber = num
+        expandedSize = Vector3.new(num, num, num)
+        if isHitboxEnabled then applyHitbox() end
+    end
+end)
+
+HitboxTab:CreateSection("🤖 Killnpc-|-ฆ่าnpc")
+HitboxTab:CreateButton("🤖 KILLNPC-|-(ฆ่าNPCบางแมพ)", function()
+    runExternal("https://raw.githubusercontent.com/wackshopr-tech/script-roblox-all/refs/heads/main/SCRIPT-ALL-BY-WACK-SHOP/kill-all-bot/killall-npc..lua")
+end)
+
+HitboxTab:CreateSection("⚓️ Attract players-|-ดึงผู้เล่น")
+HitboxTab:CreateButton("⚓️ ATTRACT PLAYERS-|-(ดึงผู้เล่นแต่ผู้เล่นไม่เห็นเรา)", function()
+    runExternal("https://raw.githubusercontent.com/wackshopr-tech/script-roblox-all/refs/heads/main/SCRIPT-ALL-BY-WACK-SHOP/pull%20false%20people/pull-false-people.lua")
+end)
+
+-- 3. TAB: TOOL
+local ToolTab = createTab("TOOL", "📓")
+ToolTab:CreateSection("📢 About the player-|-เกี่ยวกับผู้เล่น")
+ToolTab:CreateButton("🪁 KICK A PLAYER-|-(เตะผู้เล่น)", function()
+    runExternal("https://pastebin.com/raw/pFWYEcHe")
+end)
+
+ToolTab:CreateButton("🎈 PLAYER BANNED-|-(สั่งปลิวผู้เล่น)", function()
+    runExternal("https://pastebin.com/raw/JqWgqXWz")
+end)
+
+ToolTab:CreateSection("🛰️ About fps-|-เกี่ยวกับfps")
+ToolTab:CreateButton("🏔️ CHANGE IMAGE-|-(เปลี่ยนภาพลื่น)", function()
+    runExternal("https://raw.githubusercontent.com/wackshopr-tech/script-roblox-all/refs/heads/main/SCRIPT-ALL-BY-WACK-SHOP/Boots-fps/Boots-fps.lua")
+end)
+
+ToolTab:CreateButton("💡 BRIGHTEN THE IMAGE-|-(เปลี่ยนภาพสว่าง)", function()
+    runExternal("https://raw.githubusercontent.com/wackshopr-tech/script-roblox-all/refs/heads/main/SCRIPT-ALL-BY-WACK-SHOP/Lighting/Lighting.lua")
+end)
+
+ToolTab:CreateButton("🌐 CHECK FOR LAG-|-(เช็คอาการแลคเน็ตกาก)", function()
+    runExternal("https://pastebin.com/raw/vtWZPNs2")
+end)
+
+ToolTab:CreateSection("🧰 Other-|-อื่นๆ")
+ToolTab:CreateButton("🎤 PLAY MUSIC-|-(เปิดเพลง)", function()
+    runExternal("https://pastebin.com/raw/praS4qBM")
+end)
+
+ToolTab:CreateButton("🗺️ SHOW BLOOD AND MAP-|-(แสดงเลือดและแผนที่ตัวเอง)", function()
+    runExternal("https://pastebin.com/raw/C8cKkbhe")
+end)
+
+ToolTab:CreateButton("🔀 REPEAT ONESELF-|-(ทำซ้ำตัวเอง)", function()
+    runExternal("https://pastebin.com/raw/be4tLhXX")
+end)
+
+ToolTab:CreateButton("💻 KEYBOARD-|-(แป้นพิมพ์)", function()
+    runExternal("https://raw.githubusercontent.com/Xxtan31/Ata/main/deltakeyboardcrack.txt")
+end)
+
+ToolTab:CreateButton("📦 CONJURE AN OBJECT-|-(เสกของแต่ใช้ไม่ได้จริง)", function()
+    runExternal("https://raw.githubusercontent.com/wackshopr-tech/script-roblox-all/refs/heads/main/SCRIPT-ALL-BY-WACK-SHOP/conjure%20things/conjure-things.lua")
+end)
+
+ToolTab:CreateButton("🏎️ ADJUST VEHICLE SPEED-|-(ปรับความเร็วรถ)", function()
+    runExternal("https://raw.githubusercontent.com/wackshopr-tech/script-roblox-all/refs/heads/main/SCRIPT-ALL-BY-WACK-SHOP/Speed-car/Speed-car.lua")
+end)
+
+ToolTab:CreateButton("⛰️ BUILD A BIC-|-(สร้างบอคแต่คนอื่นไม่เห็น)", function()
+    runExternal("https://pastebin.com/raw/FZmTykdY")
+end)
+
+-- 4. TAB: ESP
+local EspTab = createTab("ESP", "📗")
+EspTab:CreateSection("👁️ Esp-|-มองทะลุผู้เล่น")
+EspTab:CreateButton("👁️ SEE THROUGH PLAYERS-|-(มองทะลุ V1)", function()
+    runExternal("https://pastebin.com/raw/Th2Cr8a6")
+end)
+
+EspTab:CreateButton("👀 SEE THROUGH PLAYERS-|-(มองทะลุ V2)", function()
+    runExternal("https://pastebin.com/raw/46PeRaFs")
+end)
+
+EspTab:CreateButton("🔮 SEE THROUGH PLAYERS-|-(มองทะลุ V3)", function()
+    runExternal("https://pastebin.com/raw/m6bWsPGV")
+end)
+
+EspTab:CreateButton("🔎 SEE THROUGH PLAYERS-|-(มองทะลุ V4)", function()
+    runExternal("https://pastebin.com/raw/mHYpMr8x")
+end)
+
+EspTab:CreateSection("👁️ Esp player-|-ปรับค่ามองทะลุผู้เล่น")
+EspTab:CreateToggle("🏷️ ESP NAME-|-(แสดงชื่อผู้เล่น)", false, function(v)
+    isEspName = v
+    refreshAllESP()
+end)
+
+EspTab:CreateToggle("📏 ESP DISTANCE-|-(แสดงระยะห่าง)", false, function(v)
+    isEspDistance = v
+    refreshAllESP()
+end)
+
+EspTab:CreateToggle("❤️ ESP HEALTH-|-(แสดงหลอดเลือด)", false, function(v)
+    isEspHealth = v
+    refreshAllESP()
+end)
+
+EspTab:CreateSection("👀 Esp npc-|-มองทะลุnpc")
+EspTab:CreateButton("👀 SEE THROUGH NPCS-|-(มองทะลุNPC V1)", function()
+    runExternal("https://pastebin.com/raw/i61zBwvh")
+end)
+
+EspTab:CreateButton("👀 SEE THROUGH NPCS-|-(มองทะลุNPC V2)", function()
+    runExternal("https://pastebin.com/raw/XT4HCWwS")
+end)
+
+-- 5. TAB: SCRIPT TZX
+local ZxTab = createTab("SCRIPT TZX", "📙")
+ZxTab:CreateSection("🔐 Script aimbot esp tzx-|-สคริปล็อค+มองทะลุ tzx")
+ZxTab:CreateButton("🔐 SCRIPT AIMBOT ESP V1-|-(สคริปล็อค+มองV1 TZX)", function()
+    runExternal("https://pastebin.com/raw/22yFNSWa")
+end)
+
+ZxTab:CreateButton("📎 SCRIPT AIMBOT ESP V2-|-(สคริปล็อค+มองV2 TZX)", function()
+    runExternal("https://pastebin.com/raw/bq8YB32p")
+end)
+
+ZxTab:CreateButton("🎯 SCRIPT AIMBOT ESP V3-|-(สคริปล็อค+มองV3 TZX)", function()
+    runExternal("https://pastebin.com/raw/7z8PULyU")
+end)
+
+ZxTab:CreateSection("⚡️ Script fps tzx-|-สคริปบูสfps tzx")
+ZxTab:CreateButton("⚡️ SCRIPT FPS-|-(สคริปบูสFPS TZX)", function()
+    runExternal("https://pastebin.com/raw/vrZJV4RM")
+end)
+
+ZxTab:CreateSection("🌱 Script mushroom tzx-|-สคริปปลูกเห็ด tzx")
+ZxTab:CreateButton("🌱 MUSHROOM CULTIVATION SCRIPT-|-(สคลิปปลูกเห็ด TZX)", function()
+    runExternal("https://pastebin.com/raw/8mdibu7j")
+end)
+
+ZxTab:CreateSection("🔪 Script assassin tzx-|-สคริปฆาตกร tzx")
+ZxTab:CreateButton("🔪 SCRIPT ASSASSIN-|-(สคริปฆาตกรร TZX)", function()
+    runExternal("https://pastebin.com/raw/tgCqw4DK")
+end)
+
+ZxTab:CreateSection("🚶 Script stance tzx-|-สคริปท่าทาง tzx")
+ZxTab:CreateButton("🚶 SCRIPT STANCE-|-(สคริปอีโมตท่าทางต่างๆ TZX)", function()
+    runExternal("https://rawscripts.net/raw/Universal-Script-Emote-Gui-75782")
+end)
+
+---------------------------------------------------------
+-- 6. TAB: SETTINGS (รวมฟังก์ชันปรับแต่ง + Re-Server)
+---------------------------------------------------------
+local SettingsTab = createTab("SETTINGS", "⚙️")
+
+-- ฟังก์ชันใหม่: Re-Server (ย้ายไปเซิร์ฟเวอร์อื่นในแมพเดิม)
+SettingsTab:CreateSection("🌐 Server Hop-|-(ย้ายเซิร์ฟเวอร์ใหม่)")
+SettingsTab:CreateButton("🔄 RE-SERVER (เปลี่ยนเซิร์ฟเวอร์)", function()
+    pcall(function()
+        TeleportService:Teleport(game.PlaceId, LocalPlayer)
+    end)
+end)
+
+-- ฟังก์ชัน 1: ปรับสีขอบเมนู (9 สี)
+SettingsTab:CreateSection("🎨 BORDER COLOR-|-(ปรับสีขอบเมนู)")
+
+local borderColors = {
+    { Name = "Red", Color = Color3.fromRGB(255, 35, 35) },
+    { Name = "Blue", Color = Color3.fromRGB(45, 135, 255) },
+    { Name = "Green", Color = Color3.fromRGB(40, 220, 110) },
+    { Name = "Purple", Color = Color3.fromRGB(180, 50, 255) },
+    { Name = "Orange", Color = Color3.fromRGB(255, 140, 20) },
+    { Name = "Yellow", Color = Color3.fromRGB(255, 225, 30) },
+    { Name = "Black", Color = Color3.fromRGB(20, 20, 20) },
+    { Name = "White", Color = Color3.fromRGB(255, 255, 255) },
+    { Name = "Rainbow", Color = Color3.fromRGB(255, 100, 200), IsRainbow = true }
+}
+
+SettingsTab:CreateColorGrid("Select Border Color (9 Colors)", borderColors, function(selected)
+    if selected.IsRainbow then
+        isRainbowBorder = true
+        IconStroke.Color = Color3.fromRGB(255, 255, 255)
+    else
+        isRainbowBorder = false
+        MainStroke.Color = selected.Color
+        IconStroke.Color = selected.Color
+    end
+end)
+
+-- ฟังก์ชัน 2: ปรับความจางของเมนู (Menu Transparency)
+SettingsTab:CreateSection("🌫️ MENU TRANSPARENCY-|-(ปรับความจางเมนู)")
+SettingsTab:CreateSlider("Transparency (ความจาง 0% - 85%)", 0, 85, 0, function(val)
+    local alpha = val / 100
+    MainFrame.BackgroundTransparency = alpha
+    Topbar.BackgroundTransparency = math.clamp(alpha + 0.05, 0, 1)
+    TopbarBottomCover.BackgroundTransparency = math.clamp(alpha + 0.05, 0, 1)
+    Sidebar.BackgroundTransparency = math.clamp(alpha + 0.05, 0, 1)
+    SidebarCoverTop.BackgroundTransparency = math.clamp(alpha + 0.05, 0, 1)
+    SidebarCoverRight.BackgroundTransparency = math.clamp(alpha + 0.05, 0, 1)
+end)
+
+-- ฟังก์ชัน 3: ปรับขนาดของเมนู (Menu Size)
+SettingsTab:CreateSection("📐 MENU SIZE-|-(ปรับขนาดเมนู)")
+SettingsTab:CreateSlider("Scale Size (ขนาด 70% - 140%)", 70, 140, 100, function(val)
+    local scale = val / 100
+    local newW = math.floor(baseWidth * scale)
+    local newH = math.floor(baseHeight * scale)
+    MainFrame.Size = UDim2.new(0, newW, 0, newH)
+end)
+
+print("[TZX SCRIPT] โหลดเมนู สคริปรวม | TZX เรียบร้อยแล้ว!")
