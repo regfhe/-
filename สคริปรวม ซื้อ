@@ -9,6 +9,8 @@ local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 local TeleportService = game:GetService("TeleportService")
+local MarketplaceService = game:GetService("MarketplaceService")
+local Lighting = game:GetService("Lighting")
 local LocalPlayer = Players.LocalPlayer
 
 -- ป้องกัน Gui หลุดหรือซ้ำ
@@ -51,6 +53,127 @@ local currentJump = 50
 local isRainbowBorder = false
 local baseWidth = 580
 local baseHeight = 360
+
+-- ตัวแปรระบบซ่อนเมนู
+local hideMenuMode = false
+local lastFourFingerTap = 0
+local fourFingerTapWindow = 1.2
+local pcOpenKey = "Z"
+local pcOpenKeyCode = Enum.KeyCode.Z
+local pcOpenToken = 0
+local showCloseConfirm
+local hideRunnerIcon = false
+local hiddenRunnerObjects = {}
+local customPlayerName = LocalPlayer.DisplayName
+local sessionStartTime = os.clock()
+
+-- ตัวแปรระบบเปลี่ยนท้องฟ้า
+local originalSkyClones = {}
+local originalAtmosphereClones = {}
+local originalLightingSettings = {
+    ClockTime = Lighting.ClockTime,
+    Brightness = Lighting.Brightness,
+    Ambient = Lighting.Ambient,
+    OutdoorAmbient = Lighting.OutdoorAmbient,
+    ColorShift_Top = Lighting.ColorShift_Top,
+    ColorShift_Bottom = Lighting.ColorShift_Bottom,
+    ExposureCompensation = Lighting.ExposureCompensation,
+    GlobalShadows = Lighting.GlobalShadows
+}
+
+-- เก็บท้องฟ้า/Atmosphere เดิมไว้ เพื่อให้เลือก "แบบเดิม" แล้วคืนค่าได้
+pcall(function()
+    for _, obj in ipairs(Lighting:GetChildren()) do
+        if obj:IsA("Sky") then
+            local clone = obj:Clone()
+            clone.Parent = nil
+            table.insert(originalSkyClones, clone)
+        elseif obj:IsA("Atmosphere") then
+            local clone = obj:Clone()
+            clone.Parent = nil
+            table.insert(originalAtmosphereClones, clone)
+        end
+    end
+end)
+
+local function removeCurrentSkyAndAtmosphere()
+    for _, obj in ipairs(Lighting:GetChildren()) do
+        if obj:IsA("Sky") or obj:IsA("Atmosphere") then
+            obj:Destroy()
+        end
+    end
+end
+
+local function restoreOriginalSky()
+    removeCurrentSkyAndAtmosphere()
+
+    for _, clone in ipairs(originalSkyClones) do
+        pcall(function() clone:Clone().Parent = Lighting end)
+    end
+    for _, clone in ipairs(originalAtmosphereClones) do
+        pcall(function() clone:Clone().Parent = Lighting end)
+    end
+
+    for property, value in pairs(originalLightingSettings) do
+        pcall(function() Lighting[property] = value end)
+    end
+end
+
+local function setSkyMode(mode)
+    if mode == "เดิม" then
+        restoreOriginalSky()
+        return
+    end
+
+    if mode == "กลางวัน" then
+        -- ใช้ท้องฟ้าของแมพเดิม แต่กำหนดเวลาเป็นกลางวัน
+        restoreOriginalSky()
+        Lighting.ClockTime = 12
+        Lighting.Brightness = 2
+        return
+    end
+
+    if mode == "กลางคืน" then
+        -- ใช้ท้องฟ้าของแมพเดิม แต่กำหนดเวลาเป็นกลางคืน
+        restoreOriginalSky()
+        Lighting.ClockTime = 0
+        Lighting.Brightness = 0.5
+        return
+    end
+
+    if mode == "ภาพสวย" then
+        removeCurrentSkyAndAtmosphere()
+
+        local beautifulSky = Instance.new("Sky")
+        beautifulSky.Name = "TZX_BeautifulSky"
+        beautifulSky.SkyboxBk = "rbxassetid://162001887"
+        beautifulSky.SkyboxDn = "rbxassetid://161998893"
+        beautifulSky.SkyboxFt = "rbxassetid://162001897"
+        beautifulSky.SkyboxLf = "rbxassetid://162001904"
+        beautifulSky.SkyboxRt = "rbxassetid://162001919"
+        beautifulSky.SkyboxUp = "rbxassetid://162001926"
+        beautifulSky.CelestialBodiesShown = true
+        beautifulSky.StarCount = 3000
+        beautifulSky.Parent = Lighting
+
+        local atmosphere = Instance.new("Atmosphere")
+        atmosphere.Name = "TZX_BeautifulAtmosphere"
+        atmosphere.Density = 0.25
+        atmosphere.Offset = 0.1
+        atmosphere.Color = Color3.fromRGB(199, 216, 255)
+        atmosphere.Decay = Color3.fromRGB(255, 255, 255)
+        atmosphere.Glare = 0.15
+        atmosphere.Haze = 1
+        atmosphere.Parent = Lighting
+
+        Lighting.ClockTime = 14
+        Lighting.Brightness = 2.5
+        Lighting.ExposureCompensation = 0.15
+        Lighting.GlobalShadows = true
+        Lighting.Ambient = Color3.fromRGB(100, 100, 110)
+        Lighting.OutdoorAmbient = Color3.fromRGB(150, 150, 160)
+    end
+end
 
 ---------------------------------------------------------
 -- ฟังก์ชัน HITBOX EXPANDER
@@ -350,7 +473,9 @@ CloseBtnCorner.CornerRadius = UDim.new(0, 6)
 CloseBtnCorner.Parent = CloseBtn
 
 CloseBtn.MouseButton1Click:Connect(function()
-    ScreenGui:Destroy()
+    if showCloseConfirm then
+        showCloseConfirm()
+    end
 end)
 
 -- Sidebar (แถบข้างพร้อมแก้ขอบล่างซ้ายโค้งรับตัวเมนู)
@@ -463,14 +588,248 @@ UserInputService.InputChanged:Connect(function(input)
     end
 end)
 
+-- ค้นหาไอคอนตัวรันภายนอก TZX (เช่น ไอคอนนินจาที่อยู่บนหน้าจอ)
+-- ไม่แตะ FloatingIcon ของ TZX ซึ่งเป็นไอคอนเปิดเมนูรูปเงิน
+local function looksLikeRunnerObject(obj)
+    if not obj or not obj:IsA("GuiObject") then return false end
+    if obj:IsDescendantOf(ScreenGui) then return false end
+
+    local n = string.lower(obj.Name or "")
+    local runnerWords = {
+        "ninja", "runner", "executor", "executoricon", "delta", "arceus",
+        "fluxus", "codex", "hydrogen", "swift", "scriptware", "krnl",
+        "solara", "exploit", "injector"
+    }
+    for _, word in ipairs(runnerWords) do
+        if string.find(n, word, 1, true) then
+            return true
+        end
+    end
+
+    -- สำรองกรณีไอคอนไม่มีชื่อสื่อความหมาย:
+    -- ไอคอนตัวรันในภาพตัวอย่างอยู่ด้านบนกึ่งกลางและมีขนาดเล็ก
+    if (obj:IsA("ImageButton") or obj:IsA("ImageLabel")) and obj.Visible then
+        local ok, pos, size = pcall(function()
+            return obj.AbsolutePosition, obj.AbsoluteSize
+        end)
+        if ok and pos and size then
+            local viewport = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(1920, 1080)
+            local centerX = pos.X + size.X / 2
+            local centerY = pos.Y + size.Y / 2
+            local nearTopCenter = centerY <= 150 and math.abs(centerX - viewport.X / 2) <= viewport.X * 0.22
+            local smallIcon = size.X <= 120 and size.Y <= 120 and size.X >= 24 and size.Y >= 24
+            if nearTopCenter and smallIcon then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+local function setRunnerIconHidden(hidden)
+    if hidden then
+        for _, obj in ipairs(ParentGui:GetDescendants()) do
+            if looksLikeRunnerObject(obj) then
+                if hiddenRunnerObjects[obj] == nil then
+                    hiddenRunnerObjects[obj] = obj.Visible
+                end
+                obj.Visible = false
+            end
+        end
+    else
+        for obj, wasVisible in pairs(hiddenRunnerObjects) do
+            if obj and obj.Parent then
+                obj.Visible = wasVisible
+            end
+            hiddenRunnerObjects[obj] = nil
+        end
+    end
+end
+
+-- ตรวจไอคอนใหม่ที่ถูกสร้างภายหลังด้วย
+ParentGui.DescendantAdded:Connect(function(obj)
+    if hideRunnerIcon then
+        task.defer(function()
+            if looksLikeRunnerObject(obj) then
+                hiddenRunnerObjects[obj] = obj.Visible
+                obj.Visible = false
+            end
+        end)
+    end
+end)
+
 MinBtn.MouseButton1Click:Connect(function()
     MainFrame.Visible = false
-    FloatingIcon.Visible = true
+
+    -- FloatingIcon ของ TZX ต้องยังแสดงตามปกติเมื่อย่อเมนู
+    -- hideRunnerIcon มีผลเฉพาะไอคอนตัวรันนินจาภายนอกเท่านั้น
+    if hideMenuMode then
+        FloatingIcon.Visible = false
+    else
+        FloatingIcon.Visible = true
+    end
 end)
 
 FloatingIcon.MouseButton1Click:Connect(function()
-    FloatingIcon.Visible = false
+    if not hideMenuMode then
+        FloatingIcon.Visible = false
+        MainFrame.Visible = true
+    end
+end)
+
+---------------------------------------------------------
+-- ระบบยืนยันก่อนปิดเมนู
+---------------------------------------------------------
+local ConfirmOverlay = Instance.new("Frame")
+ConfirmOverlay.Name = "CloseConfirmOverlay"
+ConfirmOverlay.Size = UDim2.new(1, 0, 1, 0)
+ConfirmOverlay.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+ConfirmOverlay.BackgroundTransparency = 0.35
+ConfirmOverlay.Visible = false
+ConfirmOverlay.ZIndex = 50
+ConfirmOverlay.Parent = ScreenGui
+
+local ConfirmBox = Instance.new("Frame")
+ConfirmBox.Name = "ConfirmBox"
+ConfirmBox.Size = UDim2.new(0, 300, 0, 150)
+ConfirmBox.Position = UDim2.new(0.5, -150, 0.5, -75)
+ConfirmBox.BackgroundColor3 = Color3.fromRGB(20, 25, 34)
+ConfirmBox.BorderSizePixel = 0
+ConfirmBox.ZIndex = 51
+ConfirmBox.Parent = ConfirmOverlay
+
+local ConfirmCorner = Instance.new("UICorner")
+ConfirmCorner.CornerRadius = UDim.new(0, 10)
+ConfirmCorner.Parent = ConfirmBox
+
+local ConfirmStroke = Instance.new("UIStroke")
+ConfirmStroke.Thickness = 2
+ConfirmStroke.Color = Color3.fromRGB(255, 35, 35)
+ConfirmStroke.Parent = ConfirmBox
+
+local ConfirmTitle = Instance.new("TextLabel")
+ConfirmTitle.Size = UDim2.new(1, -20, 0, 55)
+ConfirmTitle.Position = UDim2.new(0, 10, 0, 10)
+ConfirmTitle.BackgroundTransparency = 1
+ConfirmTitle.Font = Enum.Font.GothamBold
+ConfirmTitle.Text = "ต้องการปิดเมนูนี้หรือไม่?"
+ConfirmTitle.TextColor3 = Color3.fromRGB(255, 255, 255)
+ConfirmTitle.TextSize = 16
+ConfirmTitle.TextWrapped = true
+ConfirmTitle.ZIndex = 52
+ConfirmTitle.Parent = ConfirmBox
+
+local ConfirmYes = Instance.new("TextButton")
+ConfirmYes.Size = UDim2.new(0.42, 0, 0, 38)
+ConfirmYes.Position = UDim2.new(0.06, 0, 1, -50)
+ConfirmYes.BackgroundColor3 = Color3.fromRGB(200, 40, 40)
+ConfirmYes.BorderSizePixel = 0
+ConfirmYes.Font = Enum.Font.GothamBold
+ConfirmYes.Text = "ยืนยัน"
+ConfirmYes.TextColor3 = Color3.fromRGB(255, 255, 255)
+ConfirmYes.TextSize = 13
+ConfirmYes.ZIndex = 52
+ConfirmYes.Parent = ConfirmBox
+
+local ConfirmYesCorner = Instance.new("UICorner")
+ConfirmYesCorner.CornerRadius = UDim.new(0, 6)
+ConfirmYesCorner.Parent = ConfirmYes
+
+local ConfirmNo = Instance.new("TextButton")
+ConfirmNo.Size = UDim2.new(0.42, 0, 0, 38)
+ConfirmNo.Position = UDim2.new(0.52, 0, 1, -50)
+ConfirmNo.BackgroundColor3 = Color3.fromRGB(45, 50, 60)
+ConfirmNo.BorderSizePixel = 0
+ConfirmNo.Font = Enum.Font.GothamBold
+ConfirmNo.Text = "ยกเลิก"
+ConfirmNo.TextColor3 = Color3.fromRGB(255, 255, 255)
+ConfirmNo.TextSize = 13
+ConfirmNo.ZIndex = 52
+ConfirmNo.Parent = ConfirmBox
+
+local ConfirmNoCorner = Instance.new("UICorner")
+ConfirmNoCorner.CornerRadius = UDim.new(0, 6)
+ConfirmNoCorner.Parent = ConfirmNo
+
+showCloseConfirm = function()
+    if ScreenGui and ScreenGui.Parent then
+        ConfirmOverlay.Visible = true
+        MainFrame.Visible = true
+        FloatingIcon.Visible = false
+    end
+end
+
+ConfirmNo.MouseButton1Click:Connect(function()
+    ConfirmOverlay.Visible = false
     MainFrame.Visible = true
+    if hideMenuMode then
+        FloatingIcon.Visible = false
+    end
+end)
+
+ConfirmYes.MouseButton1Click:Connect(function()
+    ConfirmOverlay.Visible = false
+    ScreenGui:Destroy()
+end)
+
+---------------------------------------------------------
+-- ระบบซ่อนเมนู / เปิดเมนูด้วยท่าทางหรือคีย์ลัด
+---------------------------------------------------------
+local activeTouches = {}
+
+UserInputService.TouchStarted:Connect(function(input, gameProcessed)
+    if not hideMenuMode or gameProcessed then return end
+
+    activeTouches[input] = true
+
+    local count = 0
+    for _ in pairs(activeTouches) do
+        count += 1
+    end
+
+    if count >= 4 then
+        local now = os.clock()
+
+        if now - lastFourFingerTap <= fourFingerTapWindow then
+            MainFrame.Visible = true
+            FloatingIcon.Visible = false
+            ConfirmOverlay.Visible = false
+            lastFourFingerTap = 0
+        else
+            lastFourFingerTap = now
+        end
+    end
+end)
+
+UserInputService.TouchEnded:Connect(function(input)
+    activeTouches[input] = nil
+end)
+
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed or not hideMenuMode then return end
+    if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
+
+    -- เปิดเมนูด้วยตัวอักษรที่ผู้ใช้ตั้งไว้ และรอ 0.5 วินาที
+    if input.KeyCode == pcOpenKeyCode then
+        pcOpenToken += 1
+        local myToken = pcOpenToken
+
+        task.delay(0.5, function()
+            if hideMenuMode and input.KeyCode == pcOpenKeyCode and myToken == pcOpenToken then
+                MainFrame.Visible = true
+                FloatingIcon.Visible = false
+                ConfirmOverlay.Visible = false
+            end
+        end)
+    end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
+
+    if input.KeyCode == pcOpenKeyCode then
+        pcOpenToken += 1
+    end
 end)
 
 ---------------------------------------------------------
@@ -759,6 +1118,8 @@ local function createTab(tabName, iconText)
         Box.FocusLost:Connect(function()
             pcall(callback, Box.Text)
         end)
+
+        return Box
     end
 
     function tabFunctions:CreateColorGrid(title, colorTable, callback)
@@ -887,6 +1248,7 @@ PlayerTab:CreateButton("🔄 RESET-|-(รีเซ็ตค่าเดิมท
 end)
 
 -- 2. TAB: AIMBOT
+
 local HitboxTab = createTab("AIMBOT", "📕")
 HitboxTab:CreateSection("🔫 Headlock-|-ล็อคหัวผู้เล่น")
 HitboxTab:CreateButton("🔫 HEADLOCK-|-(ล็อคหัวผู้เล่น)", function()
@@ -1061,6 +1423,84 @@ end)
 ---------------------------------------------------------
 local SettingsTab = createTab("SETTINGS", "⚙️")
 
+-- ฟังก์ชันซ่อนเมนู: ซ่อนเมนูและไอคอนตัวรันตอนย่อ
+SettingsTab:CreateSection("👻 HIDE MENU-|-(ซ่อนเมนูเช็กไม่เจอ)")
+SettingsTab:CreateToggle("👻 ซ่อนเมนูเช็กไม่เจอ", false, function(v)
+    hideMenuMode = v
+
+    if v then
+        MainFrame.Visible = false
+        FloatingIcon.Visible = false
+        ConfirmOverlay.Visible = false
+        lastFourFingerTap = 0
+    else
+        MainFrame.Visible = true
+        FloatingIcon.Visible = false
+        ConfirmOverlay.Visible = false
+        lastFourFingerTap = 0
+        pcOpenToken += 1
+    end
+end)
+
+SettingsTab:CreateSection("👻 RUNNER ICON-|-(ตัวรันนินจา)")
+SettingsTab:CreateToggle("🥷 ซ่อนตัวรัน", false, function(v)
+    hideRunnerIcon = v
+
+    -- สำคัญ: ไม่ซ่อน FloatingIcon ของ TZX (ไอคอนรูปเงิน)
+    -- จะซ่อนเฉพาะไอคอนตัวรันภายนอกที่ตรวจพบเท่านั้น
+    setRunnerIconHidden(v)
+end)
+
+SettingsTab:CreateSection("⌨️ PC / Notebook-|-(ตั้งปุ่มเปิดเมนู)")
+
+local pcKeyInput = SettingsTab:CreateInput("🔑 ตัวอักษรเปิดเมนู (1 ตัว)", "เช่น Z", function(text)
+    -- จำกัดให้เป็นตัวอักษรภาษาอังกฤษเพียง 1 ตัว
+    local clean = string.upper(tostring(text or "")):match("%a")
+    if clean and #clean == 1 then
+        pcOpenKey = clean
+        local keyCode = Enum.KeyCode[clean]
+        if keyCode then
+            pcOpenKeyCode = keyCode
+        end
+        pcKeyInput.Text = clean
+    else
+        pcKeyInput.Text = pcOpenKey
+    end
+end)
+pcKeyInput.Text = pcOpenKey
+pcKeyInput.ClearTextOnFocus = false
+
+pcKeyInput:GetPropertyChangedSignal("Text"):Connect(function()
+    local text = pcKeyInput.Text or ""
+    if #text > 1 then
+        pcKeyInput.Text = string.sub(text, 1, 1)
+    end
+end)
+
+SettingsTab:CreateButton("✅ ยืนยันตัวอักษรเปิดเมนู", function()
+    local text = string.upper(tostring(pcKeyInput.Text or ""))
+    if text:match("^[A-Z]$") then
+        pcOpenKey = text
+        local keyCode = Enum.KeyCode[text]
+        if keyCode then
+            pcOpenKeyCode = keyCode
+            pcOpenToken += 1
+        end
+        pcKeyInput.Text = pcOpenKey
+    else
+        pcKeyInput.Text = pcOpenKey
+    end
+end)
+
+SettingsTab:CreateSection("ℹ️ วิธีเปิดเมนูเมื่อเปิดโหมดซ่อน")
+SettingsTab:CreateButton("📱 iPad / iPhone: แตะ 4 นิ้ว 2 ครั้ง", function()
+    -- คำอธิบายวิธีเปิดเมนู
+end)
+
+SettingsTab:CreateButton("⌨️ PC / Notebook: กดตัวอักษรที่ตั้งไว้ แล้วรอ 0.5 วินาที", function()
+    -- คำอธิบายวิธีเปิดเมนู
+end)
+
 -- ฟังก์ชันใหม่: Re-Server (ย้ายไปเซิร์ฟเวอร์อื่นในแมพเดิม)
 SettingsTab:CreateSection("🌐 Server Hop-|-(ย้ายเซิร์ฟเวอร์ใหม่)")
 SettingsTab:CreateButton("🔄 RE-SERVER (เปลี่ยนเซิร์ฟเวอร์)", function()
@@ -1114,6 +1554,19 @@ SettingsTab:CreateSlider("Scale Size (ขนาด 70% - 140%)", 70, 140, 100, f
     local newW = math.floor(baseWidth * scale)
     local newH = math.floor(baseHeight * scale)
     MainFrame.Size = UDim2.new(0, newW, 0, newH)
+end)
+
+-- ฟังก์ชัน 4: เปลี่ยนท้องฟ้า (อยู่ท้ายสุดของ SETTINGS)
+SettingsTab:CreateSection("🌌 SKY SETTINGS-|-(เปลี่ยนท้องฟ้า)")
+local skyOptions = {
+    {Name = "🌤️ แบบเดิม", Mode = "เดิม"},
+    {Name = "☀️ กลางวัน", Mode = "กลางวัน"},
+    {Name = "🌙 กลางคืน", Mode = "กลางคืน"},
+    {Name = "✨ ภาพสวย", Mode = "ภาพสวย"}
+}
+
+SettingsTab:CreateColorGrid("เลือกท้องฟ้า (4 แบบ)", skyOptions, function(selected)
+    setSkyMode(selected.Mode)
 end)
 
 print("[TZX SCRIPT] โหลดเมนู สคริปรวม | TZX เรียบร้อยแล้ว!")
