@@ -1,0 +1,209 @@
+-- =======================================================
+-- MAHANAKHON RACING-TZX (AUTO FARM FIXED 100%)
+-- Support: Mobile Executors (Delta, Fluxus, Codex, Cryptic)
+-- =======================================================
+
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+local CoreGui = game:GetService("CoreGui")
+local VirtualUser = game:GetService("VirtualUser")
+
+local LocalPlayer = Players.LocalPlayer
+
+-- ลบ UI เก่า
+if CoreGui:FindFirstChild("MahanakhonGUI") then
+    CoreGui.MahanakhonGUI:Destroy()
+end
+
+-- สร้าง UI ขนาดเล็ก ธีมเขียว Grab
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "MahanakhonGUI"
+ScreenGui.Parent = CoreGui
+ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+
+local MainFrame = Instance.new("Frame")
+MainFrame.Name = "MainFrame"
+MainFrame.Parent = ScreenGui
+MainFrame.BackgroundColor3 = Color3.fromRGB(15, 25, 18)
+MainFrame.BorderColor3 = Color3.fromRGB(0, 200, 83)
+MainFrame.BorderSizePixel = 1
+MainFrame.Position = UDim2.new(0.05, 0, 0.2, 0)
+MainFrame.Size = UDim2.new(0, 180, 0, 130)
+MainFrame.Active = true
+MainFrame.Draggable = true
+
+local Title = Instance.new("TextLabel")
+Title.Parent = MainFrame
+Title.BackgroundColor3 = Color3.fromRGB(0, 177, 79)
+Title.BorderSizePixel = 0
+Title.Size = UDim2.new(1, 0, 0, 22)
+Title.Font = Enum.Font.SourceSansBold
+Title.Text = "mahanakhon racing-tzx"
+Title.TextColor3 = Color3.fromRGB(255, 255, 255)
+Title.TextSize = 12
+
+local FarmBtn = Instance.new("TextButton")
+FarmBtn.Parent = MainFrame
+FarmBtn.BackgroundColor3 = Color3.fromRGB(30, 40, 32)
+FarmBtn.BorderColor3 = Color3.fromRGB(0, 177, 79)
+FarmBtn.Position = UDim2.new(0.08, 0, 0.25, 0)
+FarmBtn.Size = UDim2.new(0.84, 0, 0.3, 0)
+FarmBtn.Font = Enum.Font.SourceSansBold
+FarmBtn.Text = "Gard-ออโต้ฟาร์ม: ปิด"
+FarmBtn.TextColor3 = Color3.fromRGB(255, 85, 85)
+FarmBtn.TextSize = 11
+
+local AfkBtn = Instance.new("TextButton")
+AfkBtn.Parent = MainFrame
+AfkBtn.BackgroundColor3 = Color3.fromRGB(30, 40, 32)
+AfkBtn.BorderColor3 = Color3.fromRGB(0, 177, 79)
+AfkBtn.Position = UDim2.new(0.08, 0, 0.62, 0)
+AfkBtn.Size = UDim2.new(0.84, 0, 0.3, 0)
+AfkBtn.Font = Enum.Font.SourceSansBold
+AfkBtn.Text = "afk-กันหลุด: ปิด"
+AfkBtn.TextColor3 = Color3.fromRGB(255, 85, 85)
+AfkBtn.TextSize = 11
+
+local AutoFarm = false
+local AntiAFK = false
+
+-- ฟังก์ชันหาตำแหน่งรถหรือตัวละคร
+local function GetRootPart()
+    local char = LocalPlayer.Character
+    if not char then return nil end
+    
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if hum and hum.SeatPart then
+        local vehicle = hum.SeatPart.Parent
+        while vehicle and not vehicle:IsA("Model") do
+            vehicle = vehicle.Parent
+        end
+        if vehicle then
+            return vehicle.PrimaryPart or hum.SeatPart
+        end
+    end
+    return char:FindFirstChild("HumanoidRootPart")
+end
+
+-- ฟังก์ชันวาปไปยังตำแหน่งเป้าหมาย
+local function TeleportTo(targetCFrame)
+    local root = GetRootPart()
+    if root and targetCFrame then
+        root.CFrame = targetCFrame + Vector3.new(0, 3, 0)
+    end
+end
+
+-- ฟังก์ชันกดปุ่ม UI ในโทรศัพท์อัตโนมัติ (แก้ปุ่ม Slide & Confirm)
+local function ForceClickPhone()
+    local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
+    if not playerGui then return end
+
+    for _, v in pairs(playerGui:GetDescendants()) do
+        if (v:IsA("TextButton") or v:IsA("ImageButton")) and v.Visible then
+            local text = string.lower(v.Text or "")
+            local name = string.lower(v.Name or "")
+            
+            -- ดักจับปุ่มรับงาน ปุ่มสไลด์ ปุ่มส่งงานในมือถือ
+            if string.find(name, "accept") or string.find(text, "accept") or 
+               string.find(name, "slide") or string.find(text, "slide") or
+               string.find(name, "confirm") or string.find(text, "confirm") or
+               string.find(text, "รับ") or string.find(text, "ส่ง") then
+                
+                pcall(function()
+                    -- Trigger connection ทุกประเภทของปุ่ม
+                    for _, eventName in pairs({"MouseButton1Click", "MouseButton1Down", "Activated", "TouchTap"}) do
+                        if v[eventName] then
+                            for _, conn in pairs(getconnections(v[eventName])) do
+                                conn:Fire()
+                            end
+                        end
+                    end
+                end)
+            end
+        end
+    end
+end
+
+-- ฟังก์ชันค้นหาตำแหน่งจุดรับ NPC / จุดส่งของใน Map
+local function GetTargetDestination()
+    -- 1. ตรวจหา Beam หรือ Highlight นำทางของเกม
+    for _, obj in pairs(Workspace:GetDescendants()) do
+        if (obj:IsA("Beam") or obj:IsA("SelectionBox") or obj:IsA("CylinderHandleAdornment")) then
+            if obj.Visible and obj.Parent and obj.Parent:IsA("BasePart") then
+                return obj.Parent.CFrame
+            end
+        end
+    end
+    
+    -- 2. ตรวจหาป้ายหมุดลอย (BillboardGui / Waypoint Marker)
+    for _, obj in pairs(Workspace:GetDescendants()) do
+        if obj:IsA("BillboardGui") and obj.Enabled then
+            if obj.Parent and obj.Parent:IsA("BasePart") then
+                return obj.Parent.CFrame
+            end
+        end
+    end
+    
+    -- 3. ตรวจหาจาก Model ลูกค้า NPC ใน Map
+    for _, model in pairs(Workspace:GetChildren()) do
+        if model:IsA("Model") and model:FindFirstChild("Humanoid") and model:FindFirstChild("Head") then
+            if model.Head:FindFirstChildOfClass("BillboardGui") then
+                return model.Head.CFrame
+            end
+        end
+    end
+    
+    return nil
+end
+
+-- ลูปการทำงาน Auto Farm หลัก
+task.spawn(function()
+    while true do
+        if AutoFarm then
+            pcall(function()
+                -- Step 1: กดรับงาน / กดปุ่มโทรศัพท์
+                ForceClickPhone()
+                
+                -- Step 2: ค้นหาพิกัดและวาปรถ+ตัวละครไปหาจุดหมาย
+                local targetCFrame = GetTargetDestination()
+                if targetCFrame then
+                    TeleportTo(targetCFrame)
+                end
+            end)
+        end
+        task.wait(0.5) -- ความถี่ในการทำงาน (0.5 วินาที)
+    end
+end)
+
+-- ปุ่มสวิตช์ Auto Farm
+FarmBtn.MouseButton1Click:Connect(function()
+    AutoFarm = not AutoFarm
+    if AutoFarm then
+        FarmBtn.Text = "Gard-ออโต้ฟาร์ม: เปิด"
+        FarmBtn.TextColor3 = Color3.fromRGB(0, 255, 127)
+    else
+        FarmBtn.Text = "Gard-ออโต้ฟาร์ม: ปิด"
+        FarmBtn.TextColor3 = Color3.fromRGB(255, 85, 85)
+    end
+end)
+
+-- ปุ่มสวิตช์ Anti-AFK (กันหลุด 24 ชม.+)
+local afkConn
+AfkBtn.MouseButton1Click:Connect(function()
+    AntiAFK = not AntiAFK
+    if AntiAFK then
+        AfkBtn.Text = "afk-กันหลุด: เปิด"
+        AfkBtn.TextColor3 = Color3.fromRGB(0, 255, 127)
+        afkConn = LocalPlayer.Idled:Connect(function()
+            VirtualUser:CaptureController()
+            VirtualUser:ClickButton2(Vector2.new(0, 0))
+        end)
+    else
+        AfkBtn.Text = "afk-กันหลุด: ปิด"
+        AfkBtn.TextColor3 = Color3.fromRGB(255, 85, 85)
+        if afkConn then
+            afkConn:Disconnect()
+            afkConn = nil
+        end
+    end
+end)
