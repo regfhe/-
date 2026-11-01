@@ -1,0 +1,203 @@
+-- =======================================================
+-- MAHANAKHON RACING-TZX (FULL AUTO FARM & ANTI-AFK)
+-- Support: Mobile & PC Executuors
+-- =======================================================
+
+local Players = game:GetService("Players")
+local TweenService = game:GetService("TweenService")
+local VirtualUser = game:GetService("VirtualUser")
+local CoreGui = game:GetService("CoreGui")
+local Workspace = game:GetService("Workspace")
+
+local LocalPlayer = Players.LocalPlayer
+
+-- ป้องกันสคริปต์ซ้ำ
+if CoreGui:FindFirstChild("MahanakhonGUI") then
+    CoreGui.MahanakhonGUI:Destroy()
+end
+
+-- สร้าง UI ขนาดเล็ก ธีมเขียว Grab
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "MahanakhonGUI"
+ScreenGui.Parent = CoreGui
+ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+
+local MainFrame = Instance.new("Frame")
+MainFrame.Name = "MainFrame"
+MainFrame.Parent = ScreenGui
+MainFrame.BackgroundColor3 = Color3.fromRGB(15, 25, 18)
+MainFrame.BorderColor3 = Color3.fromRGB(0, 200, 83)
+MainFrame.BorderSizePixel = 1
+MainFrame.Position = UDim2.new(0.05, 0, 0.2, 0)
+MainFrame.Size = UDim2.new(0, 180, 0, 130)
+MainFrame.Active = true
+MainFrame.Draggable = true
+
+local Title = Instance.new("TextLabel")
+Title.Parent = MainFrame
+Title.BackgroundColor3 = Color3.fromRGB(0, 177, 79) -- Grab Green
+Title.BorderSizePixel = 0
+Title.Size = UDim2.new(1, 0, 0, 22)
+Title.Font = Enum.Font.SourceSansBold
+Title.Text = "mahanakhon racing-tzx"
+Title.TextColor3 = Color3.fromRGB(255, 255, 255)
+Title.TextSize = 12
+
+local FarmBtn = Instance.new("TextButton")
+FarmBtn.Parent = MainFrame
+FarmBtn.BackgroundColor3 = Color3.fromRGB(30, 40, 32)
+FarmBtn.BorderColor3 = Color3.fromRGB(0, 177, 79)
+FarmBtn.Position = UDim2.new(0.08, 0, 0.25, 0)
+FarmBtn.Size = UDim2.new(0.84, 0, 0.3, 0)
+FarmBtn.Font = Enum.Font.SourceSansBold
+FarmBtn.Text = "Gard-ออโต้ฟาร์ม: ปิด"
+FarmBtn.TextColor3 = Color3.fromRGB(255, 85, 85)
+FarmBtn.TextSize = 11
+
+local AfkBtn = Instance.new("TextButton")
+AfkBtn.Parent = MainFrame
+AfkBtn.BackgroundColor3 = Color3.fromRGB(30, 40, 32)
+AfkBtn.BorderColor3 = Color3.fromRGB(0, 177, 79)
+AfkBtn.Position = UDim2.new(0.08, 0, 0.62, 0)
+AfkBtn.Size = UDim2.new(0.84, 0, 0.3, 0)
+AfkBtn.Font = Enum.Font.SourceSansBold
+AfkBtn.Text = "afk-กันหลุด: ปิด"
+AfkBtn.TextColor3 = Color3.fromRGB(255, 85, 85)
+AfkBtn.TextSize = 11
+
+-- ตัวแปรสถานะ
+local AutoFarm = false
+local AntiAFK = false
+
+-- ฟังก์ชันดึงวัตถุตัวละคร / รถ
+local function GetTargetRoot()
+    local char = LocalPlayer.Character
+    if not char then return nil end
+    
+    -- หากนั่งขับรถอยู่ ให้ใช้ PrimaryPart ของรถ เพื่อวาปรถไปด้วย
+    local humanoid = char:FindFirstChildOfClass("Humanoid")
+    if humanoid and humanoid.SeatPart then
+        local vehicle = humanoid.SeatPart.Parent
+        while vehicle and not vehicle:IsA("Model") do
+            vehicle = vehicle.Parent
+        end
+        if vehicle and vehicle.PrimaryPart then
+            return vehicle.PrimaryPart, vehicle
+        end
+    end
+    
+    return char:FindFirstChild("HumanoidRootPart"), char
+end
+
+-- ฟังก์ชันย้ายตำแหน่ง (Teleport)
+local function TeleportTo(targetCFrame)
+    local root = GetTargetRoot()
+    if root then
+        root.CFrame = targetCFrame + Vector3.new(0, 3, 0)
+    end
+end
+
+-- ฟังก์ชันค้นหาจุดหมุดเป้าหมายในเกม (Pickup / Drop-off Target)
+local function GetJobDestination()
+    -- 1. ค้นหาจาก Beam หรือ Highlight ที่เกมสร้างขึ้น
+    for _, v in pairs(Workspace:GetDescendants()) do
+        if (v:IsA("Beam") or v:IsA("SelectionBox")) and v.Parent and v.Parent:IsA("BasePart") then
+            if v.Visible then
+                return v.Parent.CFrame
+            end
+        end
+    end
+    
+    -- 2. ค้นหาจาก BillboardGui / Marker บนหัว NPC หรือสถานที่ส่ง
+    for _, v in pairs(Workspace:GetDescendants()) do
+        if v:IsA("BillboardGui") and v.Enabled then
+            local p = v.Parent
+            if p and p:IsA("BasePart") then
+                return p.CFrame
+            end
+        end
+    end
+    
+    return nil
+end
+
+-- ฟังก์ชันคลิกปุ่มอัตโนมัติ (รองรับ UI ในโทรศัพท์)
+local function AutoClickJobButtons()
+    local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
+    if not playerGui then return end
+
+    for _, gui in pairs(playerGui:GetChildren()) do
+        if gui:IsA("ScreenGui") and gui.Enabled then
+            for _, btn in pairs(gui:GetDescendants()) do
+                if btn:IsA("TextButton") or btn:IsA("ImageButton") then
+                    if btn.Visible then
+                        local txt = string.lower(btn:IsA("TextButton") and btn.Text or btn.Name)
+                        -- คำที่พบบ่อยในแอป QuickRider: รับงาน, รับลูกค้า, ส่งลูกค้า, ตกลง, Confirm
+                        if string.find(txt, "accept") or string.find(txt, "confirm") or string.find(txt, "pick") or string.find(txt, "drop") or string.find(txt, "รับ") or string.find(txt, "ส่ง") or string.find(txt, "slide") then
+                            pcall(function()
+                                for _, event in pairs({"MouseButton1Click", "Activated"}) do
+                                    for _, conn in pairs(getconnections(btn[event])) do
+                                        conn:Fire()
+                                    end
+                                end
+                            end)
+                        end
+                    end
+                end
+            end
+        end
+    end
+end
+
+-- ลูปทำงาน Auto Farm
+task.spawn(function()
+    while true do
+        if AutoFarm then
+            pcall(function()
+                -- กดรับงาน/กดปุ่มในมือถืออัตโนมัติ
+                AutoClickJobButtons()
+                
+                -- ค้นหาจุดเป้าหมาย (จุดรับ NPC หรือ จุดส่ง)
+                local destCFrame = GetJobDestination()
+                if destCFrame then
+                    TeleportTo(destCFrame)
+                end
+            end)
+        end
+        task.wait(1) -- ระยะเวลาวนลูป (1 วินาที)
+    end
+end)
+
+-- สวิตช์เปิด-ปิด Auto Farm
+FarmBtn.MouseButton1Click:Connect(function()
+    AutoFarm = not AutoFarm
+    if AutoFarm then
+        FarmBtn.Text = "Gard-ออโต้ฟาร์ม: เปิด"
+        FarmBtn.TextColor3 = Color3.fromRGB(0, 255, 127)
+    else
+        FarmBtn.Text = "Gard-ออโต้ฟาร์ม: ปิด"
+        FarmBtn.TextColor3 = Color3.fromRGB(255, 85, 85)
+    end
+end)
+
+-- ฟังก์ชัน Anti-AFK (กันหลุด 24 ชม.+)
+local afkConn
+AfkBtn.MouseButton1Click:Connect(function()
+    AntiAFK = not AntiAFK
+    if AntiAFK then
+        AfkBtn.Text = "afk-กันหลุด: เปิด"
+        AfkBtn.TextColor3 = Color3.fromRGB(0, 255, 127)
+        
+        afkConn = LocalPlayer.Idled:Connect(function()
+            VirtualUser:CaptureController()
+            VirtualUser:ClickButton2(Vector2.new(0, 0))
+        end)
+    else
+        AfkBtn.Text = "afk-กันหลุด: ปิด"
+        AfkBtn.TextColor3 = Color3.fromRGB(255, 85, 85)
+        if afkConn then
+            afkConn:Disconnect()
+            afkConn = nil
+        end
+    end
+end)
