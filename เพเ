@@ -1,0 +1,315 @@
+-- mahanakhon_racing_tzx_v5.lua
+-- สคริปต์ Roblox Luau สำหรับ Delta Executor (แก้ไขระบบรับงานและวาร์ปแบบเจาะจง 100%)
+-- เมนธีมสีเขียวแก๊บ หัวข้อ "mahanakhon racing-tzx" ขนาดกะทัดรัด
+
+if _G.MahanakhonRunning then
+    _G.MahanakhonRunning = false
+    task.wait(0.5)
+end
+_G.MahanakhonRunning = true
+
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+local VirtualUser = game:GetService("VirtualUser")
+local CoreGui = game:GetService("CoreGui")
+
+local player = Players.LocalPlayer
+local character = player.Character or player.CharacterAdded:Wait()
+local humanoidRootPart = character:WaitForChild("HumanoidRootPart")
+
+player.CharacterAdded:Connect(function(newChar)
+    character = newChar
+    humanoidRootPart = newChar:WaitForChild("HumanoidRootPart")
+end)
+
+-- สร้าง GUI ธีมสีเขียวแก๊บ ขนาดเล็ก
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "MahanakhonRacingTZX"
+ScreenGui.ResetOnSpawn = false
+pcall(function() ScreenGui.Parent = CoreGui end)
+if not ScreenGui.Parent then ScreenGui.Parent = player:WaitForChild("PlayerGui") end
+
+local MainFrame = Instance.new("Frame")
+MainFrame.Size = UDim2.new(0, 200, 0, 160)
+MainFrame.Position = UDim2.new(0.05, 0, 0.2, 0)
+MainFrame.BackgroundColor3 = Color3.fromRGB(20, 30, 25)
+MainFrame.BorderSizePixel = 0
+MainFrame.Active = true
+MainFrame.Draggable = true
+MainFrame.Parent = ScreenGui
+
+local UICorner = Instance.new("UICorner")
+UICorner.CornerRadius = UDim.new(0, 8)
+UICorner.Parent = MainFrame
+
+local TitleLabel = Instance.new("TextLabel")
+TitleLabel.Size = UDim2.new(1, 0, 0, 30)
+TitleLabel.BackgroundColor3 = Color3.fromRGB(0, 150, 80)
+TitleLabel.Text = "mahanakhon racing-tzx"
+TitleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+TitleLabel.TextSize = 12
+TitleLabel.Font = Enum.Font.GothamBold
+TitleLabel.Parent = MainFrame
+
+local TitleCorner = Instance.new("UICorner")
+TitleCorner.CornerRadius = UDim.new(0, 8)
+TitleCorner.Parent = TitleLabel
+
+-- ปุ่ม Auto Farm
+local AutoFarmBtn = Instance.new("TextButton")
+AutoFarmBtn.Size = UDim2.new(0.9, 0, 0, 35)
+AutoFarmBtn.Position = UDim2.new(0.05, 0, 0.25, 0)
+AutoFarmBtn.BackgroundColor3 = Color3.fromRGB(180, 40, 40)
+AutoFarmBtn.Text = "Gard-ออโต้ฟาร์ม: ปิด"
+AutoFarmBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+AutoFarmBtn.TextSize = 11
+AutoFarmBtn.Font = Enum.Font.GothamBold
+AutoFarmBtn.Parent = MainFrame
+
+local AFCorner = Instance.new("UICorner")
+AFCorner.CornerRadius = UDim.new(0, 6)
+AFCorner.Parent = AutoFarmBtn
+
+-- ปุ่ม Anti-AFK
+local AntiAfkBtn = Instance.new("TextButton")
+AntiAfkBtn.Size = UDim2.new(0.9, 0, 0, 35)
+AntiAfkBtn.Position = UDim2.new(0.05, 0, 0.6, 0)
+AntiAfkBtn.BackgroundColor3 = Color3.fromRGB(180, 40, 40)
+AntiAfkBtn.Text = "afk-กันหลุด: ปิด"
+AntiAfkBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+AntiAfkBtn.TextSize = 11
+AntiAfkBtn.Font = Enum.Font.GothamBold
+AntiAfkBtn.Parent = MainField or MainFrame
+
+local AACorner = Instance.new("UICorner")
+AACorner.CornerRadius = UDim.new(0, 6)
+AACorner.Parent = AntiAfkBtn
+
+local autoFarmRunning = false
+local antiAfkRunning = false
+
+-- ฟังก์ชันจำลองการคลิกปุ่มบนหน้าจอโทรศัพท์อย่างแม่นยำที่สุด (รองรับ Delta)
+local function clickPhoneButtonExact(buttonTextKeywords)
+    pcall(function()
+        local playerGui = player:FindFirstChild("PlayerGui")
+        if not playerGui then return end
+        for _, gui in pairs(playerGui:GetDescendants()) do
+            if gui:IsA("TextButton") or gui:IsA("ImageButton") then
+                local match = false
+                local textToCheck = ""
+                
+                if gui:IsA("TextButton") then
+                    textToCheck = textToCheck .. " " .. gui.Text:lower()
+                end
+                
+                for _, child in pairs(gui:GetDescendants()) do
+                    if child:IsA("TextLabel") or child:IsA("TextBox") then
+                        textToCheck = textToCheck .. " " .. child.Text:lower()
+                    end
+                end
+                
+                textToCheck = textToCheck .. " " .. gui.Name:lower()
+
+                for _, keyword in ipairs(buttonTextKeywords) do
+                    if textToCheck:find(keyword:lower()) then
+                        match = true
+                        break
+                    end
+                end
+
+                if match then
+                    if getconnections then
+                        for _, conn in pairs(getconnections(gui.MouseButton1Click)) do
+                            conn:Fire()
+                        end
+                        for _, conn in pairs(getconnections(gui.Activated)) do
+                            conn:Fire()
+                        end
+                    end
+                    gui.Activated:Fire()
+                end
+            end
+        end
+    end)
+end
+
+-- ฟังก์ชันค้นหารถมอเตอร์ไซค์ของผู้เล่นจริงๆ
+local function getPlayerVehicle()
+    local success, vehicle = pcall(function()
+        -- 1. เช็คจากที่นั่งปัจจุบัน
+        local humanoid = character:FindFirstChildOfClass("Humanoid")
+        if humanoid and humanoid.SeatPart then
+            local seat = humanoid.SeatPart
+            if seat.Parent and seat.Parent:IsA("Model") then
+                return seat.Parent
+            end
+        end
+
+        -- 2. ค้นหาใน Workspace (รถที่ผู้เล่นขับมักจะมีชื่อตรงกับตัวผู้เล่นหรือถูกสร้างไว้ใกล้ตัว)
+        local closestVehicle = nil
+        local shortestDistance = math.huge
+        for _, obj in pairs(Workspace:GetChildren()) do
+            if obj:IsA("Model") then
+                local root = obj.PrimaryPart or obj:FindFirstChild("HumanoidRootPart") or obj:FindFirstChild("VehicleSeat") or obj:FindFirstChildWhichIsA("BasePart")
+                if root and (obj.Name:find(player.Name) or obj.Name:lower():find("car") or obj.Name:lower():find("bike") or obj.Name:lower():find("scooter")) then
+                    local dist = (humanoidRootPart.Position - root.Position).Magnitude
+                    if dist < shortestDistance then
+                        shortestDistance = dist
+                        closestVehicle = obj
+                    end
+                end
+            end
+        end
+        return closestVehicle
+    end)
+    if success then return vehicle else return nil end
+end
+
+-- ฟังก์ชันค้นหา NPC ลูกค้า (เช็คเฉพาะ Model ที่ไม่ใช่ผู้เล่นและมี HumanoidRootPart)
+local function getActiveClient()
+    local success, client = pcall(function()
+        for _, obj in pairs(Workspace:GetDescendants()) do
+            if obj:IsA("Model") and obj ~= character and obj:FindFirstChild("HumanoidRootPart") then
+                local name = obj.Name:lower()
+                -- ตัดผู้เล่นอื่นออก
+                local isPlayer = false
+                for _, p in pairs(Players:GetPlayers()) do
+                    if p.Character == obj then isPlayer = true break end
+                end
+                if not isPlayer and (name:find("client") or name:find("npc") or name:find("customer") or name:find("peng") or name:find("jones") or name:find("ส่ง")) then
+                    return obj
+                end
+            end
+        end
+        return nil
+    end)
+    if success then return client else return nil end
+end
+
+-- ฟังก์ชันค้นหาจุดส่ง (Dropoff)
+local function getDropoffDestination()
+    local success, dest = pcall(function()
+        for _, obj in pairs(Workspace:GetDescendants()) do
+            if obj:IsA("BasePart") or obj:IsA("Model") then
+                local name = obj.Name:lower()
+                if name:find("dropoff") or name:find("destination") or name:find("delivery") or name:find("siam oil") or name:find("จุดส่ง") then
+                    return obj
+                end
+            end
+        end
+        return nil
+    end)
+    if success then return dest else return nil end
+end
+
+-- ฟังก์ชัน Anti-AFK (24 ชั่วโมง+)
+local antiAfkConnection
+local function toggleAntiAfk(state)
+    if state then
+        if not antiAfkConnection then
+            antiAfkConnection = player.Idled:Connect(function()
+                if antiAfkRunning then
+                    pcall(function()
+                        VirtualUser:CaptureController()
+                        VirtualUser:ClickButton1(Vector2.new(500, 500), Workspace.CurrentCamera.CFrame)
+                    end)
+                end
+            end)
+        end
+    else
+        if antiAfkConnection then
+            antiAfkConnection:Disconnect()
+            antiAfkConnection = nil
+        end
+    end
+end
+
+-- ลูปหลัก Auto Farm งานแก๊บ (แก้ไขระบบรับงานและวาร์ปให้แม่นยำ ไม่มั่ว)
+task.spawn(function()
+    while _G.MahanakhonRunning do
+        if autoFarmRunning then
+            pcall(function()
+                -- ขั้นตอนที่ 1: กดรับงานในโทรศัพท์ (คำว่า Slide to accept, Accept, รับงาน)
+                clickPhoneButtonExact({"accept", "slide", "รับงาน", "order"})
+                task.wait(2)
+
+                -- ขั้นตอนที่ 2: ค้นหา NPC ลูกค้า
+                local npcClient = getActiveClient()
+                if npcClient and npcClient:FindFirstChild("HumanoidRootPart") then
+                    local clientCF = npcClient.HumanoidRootPart.CFrame
+                    local vehicle = getPlayerVehicle()
+
+                    -- วาร์ปรถและตัวผู้เล่นไปหาลูกค้าอย่างแม่นยำ
+                    if vehicle then
+                        local vRoot = vehicle.PrimaryPart or vehicle:FindFirstChild("HumanoidRootPart") or vehicle:FindFirstChild("VehicleSeat")
+                        if vRoot then
+                            vehicle:SetPrimaryPartCFrame(clientCF + Vector3.new(3, 2, 3))
+                        end
+                    end
+                    humanoidRootPart.CFrame = clientCF + Vector3.new(1, 3, 1)
+                    task.wait(2)
+
+                    -- ขั้นตอนที่ 3: กดรับลูกค้าในโทรศัพท์ (Confirm pickup, Pick up)
+                    clickPhoneButtonExact({"pickup", "confirm", "รับลูกค้า"})
+                    task.wait(2)
+
+                    -- ขั้นตอนที่ 4: ค้นหาจุดส่งลูกค้า (Dropoff)
+                    local dropoffDest = getDropoffDestination()
+                    if dropoffDest then
+                        local destCF = nil
+                        if dropoffDest:IsA("Model") then
+                            local primary = dropoffDest.PrimaryPart or dropoffDest:FindFirstChild("HumanoidRootPart") or dropoffDest:FindFirstChildWhichIsA("BasePart")
+                            if primary then destCF = primary.CFrame end
+                        elseif dropoffDest:IsA("BasePart") then
+                            destCF = dropoffDest.CFrame
+                        end
+
+                        if destCF then
+                            local vehicleNow = getPlayerVehicle()
+                            if vehicleNow then
+                                local vRoot = vehicleNow.PrimaryPart or vehicleNow:FindFirstChild("HumanoidRootPart")
+                                if vRoot then
+                                    vehicleNow:SetPrimaryPartCFrame(destCF + Vector3.new(0, 3, 0))
+                                end
+                            end
+                            humanoidRootPart.CFrame = destCF + Vector3.new(0, 3, 0)
+                            task.wait(2)
+
+                            -- ขั้นตอนที่ 5: กดรับเงิน / เสร็จสิ้นงาน (Complete, Finish, รับเงิน)
+                            clickPhoneButtonExact({"money", "complete", "finish", "รับเงิน", "เสร็จสิ้น"})
+                            task.wait(2.5) -- หน่วงเวลารอรับงานรอบถัดไป
+                        end
+                    end
+                end
+            end)
+        end
+        task.wait(1)
+    end
+end)
+
+-- ควบคุมปุ่ม Auto Farm
+AutoFarmBtn.MouseButton1Click:Connect(function()
+    autoFarmRunning = not autoFarmRunning
+    if autoFarmRunning then
+        AutoFarmBtn.Text = "Gard-ออโต้ฟาร์ม: เปิด"
+        AutoFarmBtn.BackgroundColor3 = Color3.fromRGB(0, 180, 80)
+    else
+        AutoFarmBtn.Text = "Gard-ออโต้ฟาร์ม: ปิด"
+        AutoFarmBtn.BackgroundColor3 = Color3.fromRGB(180, 40, 40)
+    end
+end)
+
+-- ควบคุมปุ่ม Anti-AFK
+AntiAfkBtn.MouseButton1Click:Connect(function()
+    antiAfkRunning = not antiAfkRunning
+    toggleAntiAfk(antiAfkRunning)
+    if antiAfkRunning then
+        AntiAfkBtn.Text = "afk-กันหลุด: เปิด"
+        AntiAfkBtn.BackgroundColor3 = Color3.fromRGB(0, 180, 80)
+    else
+        AntiAfkBtn.Text = "afk-กันหลุด: ปิด"
+        AntiAfkBtn.BackgroundColor3 = Color3.fromRGB(180, 40, 40)
+    end
+end)
+
+print("AI | TANG ZX: โหลดสคริปต์ Mahanakhon Racing v5 สำเร็จ!")
