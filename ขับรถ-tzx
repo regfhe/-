@@ -1,22 +1,21 @@
 -- =======================================================
--- MAHANAKHON RACING-TZX (FIXED AUTO FARM & ANTI-AFK)
--- Support: Mobile & PC Executors (Fixed Slide Button & TP)
+-- MAHANAKHON RACING-TZX (AUTO FARM FIXED 100%)
+-- Support: Mobile Executors (Delta, Fluxus, Codex, Cryptic)
 -- =======================================================
 
 local Players = game:GetService("Players")
-local VirtualInputManager = game:GetService("VirtualInputManager")
-local VirtualUser = game:GetService("VirtualUser")
-local CoreGui = game:GetService("CoreGui")
 local Workspace = game:GetService("Workspace")
+local CoreGui = game:GetService("CoreGui")
+local VirtualUser = game:GetService("VirtualUser")
 
 local LocalPlayer = Players.LocalPlayer
 
--- ลบ UI เก่าหากเปิดอยู่
+-- ลบ UI เก่า
 if CoreGui:FindFirstChild("MahanakhonGUI") then
     CoreGui.MahanakhonGUI:Destroy()
 end
 
--- สร้าง ScreenGui ขนาดเล็ก
+-- สร้าง UI ขนาดเล็ก ธีมเขียว Grab
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "MahanakhonGUI"
 ScreenGui.Parent = CoreGui
@@ -35,7 +34,7 @@ MainFrame.Draggable = true
 
 local Title = Instance.new("TextLabel")
 Title.Parent = MainFrame
-Title.BackgroundColor3 = Color3.fromRGB(0, 177, 79) -- Grab Green
+Title.BackgroundColor3 = Color3.fromRGB(0, 177, 79)
 Title.BorderSizePixel = 0
 Title.Size = UDim2.new(1, 0, 0, 22)
 Title.Font = Enum.Font.SourceSansBold
@@ -68,10 +67,11 @@ AfkBtn.TextSize = 11
 local AutoFarm = false
 local AntiAFK = false
 
--- ฟังก์ชันหาตำแหน่งตัวละครหรือรถที่ขับอยู่
+-- ฟังก์ชันหาตำแหน่งรถหรือตัวละคร
 local function GetRootPart()
     local char = LocalPlayer.Character
     if not char then return nil end
+    
     local hum = char:FindFirstChildOfClass("Humanoid")
     if hum and hum.SeatPart then
         local vehicle = hum.SeatPart.Parent
@@ -85,17 +85,48 @@ local function GetRootPart()
     return char:FindFirstChild("HumanoidRootPart")
 end
 
--- ฟังก์ชันย้ายตำแหน่ง (Teleport)
-local function TeleportTo(cframe)
+-- ฟังก์ชันวาปไปยังตำแหน่งเป้าหมาย
+local function TeleportTo(targetCFrame)
     local root = GetRootPart()
-    if root then
-        root.CFrame = cframe + Vector3.new(0, 3, 0)
+    if root and targetCFrame then
+        root.CFrame = targetCFrame + Vector3.new(0, 3, 0)
     end
 end
 
--- ฟังก์ชันดึงพิกัดจากเป้าหมายหมุด/Beam/NPC ในเกม
-local function FindDestination()
-    -- 1. ค้นหาหมุดบอกตำแหน่ง (Beam / Highlight)
+-- ฟังก์ชันกดปุ่ม UI ในโทรศัพท์อัตโนมัติ (แก้ปุ่ม Slide & Confirm)
+local function ForceClickPhone()
+    local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
+    if not playerGui then return end
+
+    for _, v in pairs(playerGui:GetDescendants()) do
+        if (v:IsA("TextButton") or v:IsA("ImageButton")) and v.Visible then
+            local text = string.lower(v.Text or "")
+            local name = string.lower(v.Name or "")
+            
+            -- ดักจับปุ่มรับงาน ปุ่มสไลด์ ปุ่มส่งงานในมือถือ
+            if string.find(name, "accept") or string.find(text, "accept") or 
+               string.find(name, "slide") or string.find(text, "slide") or
+               string.find(name, "confirm") or string.find(text, "confirm") or
+               string.find(text, "รับ") or string.find(text, "ส่ง") then
+                
+                pcall(function()
+                    -- Trigger connection ทุกประเภทของปุ่ม
+                    for _, eventName in pairs({"MouseButton1Click", "MouseButton1Down", "Activated", "TouchTap"}) do
+                        if v[eventName] then
+                            for _, conn in pairs(getconnections(v[eventName])) do
+                                conn:Fire()
+                            end
+                        end
+                    end
+                end)
+            end
+        end
+    end
+end
+
+-- ฟังก์ชันค้นหาตำแหน่งจุดรับ NPC / จุดส่งของใน Map
+local function GetTargetDestination()
+    -- 1. ตรวจหา Beam หรือ Highlight นำทางของเกม
     for _, obj in pairs(Workspace:GetDescendants()) do
         if (obj:IsA("Beam") or obj:IsA("SelectionBox") or obj:IsA("CylinderHandleAdornment")) then
             if obj.Visible and obj.Parent and obj.Parent:IsA("BasePart") then
@@ -104,7 +135,7 @@ local function FindDestination()
         end
     end
     
-    -- 2. ค้นหาจากป้ายชื่อจุดรับ-ส่ง NPC (BillboardGui)
+    -- 2. ตรวจหาป้ายหมุดลอย (BillboardGui / Waypoint Marker)
     for _, obj in pairs(Workspace:GetDescendants()) do
         if obj:IsA("BillboardGui") and obj.Enabled then
             if obj.Parent and obj.Parent:IsA("BasePart") then
@@ -113,71 +144,34 @@ local function FindDestination()
         end
     end
     
-    return nil
-end
-
--- ฟังก์ชันกดปุ่มสไลด์/ปุ่มยืนยันในโทรศัพท์อัตโนมัติ
-local function TriggerPhoneButtons()
-    local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
-    if not playerGui then return end
-
-    for _, gui in pairs(playerGui:GetChildren()) do
-        if gui:IsA("ScreenGui") and gui.Enabled then
-            for _, element in pairs(gui:GetDescendants()) do
-                -- ตรวจหาปุ่ม TextButton / ImageButton / Frame สไลด์
-                if element:IsA("TextButton") or element:IsA("ImageButton") or element:IsA("Frame") then
-                    local name = string.lower(element.Name)
-                    local text = element:IsA("TextButton") and string.lower(element.Text) or ""
-                    
-                    -- ตรวจหาคำว่า slide, accept, confirm, pick, drop, order
-                    if string.find(name, "slide") or string.find(text, "slide") or 
-                       string.find(name, "accept") or string.find(text, "accept") or
-                       string.find(text, "confirm") or string.find(name, "confirm") then
-                        
-                        pcall(function()
-                            -- จำลองการคลิกแบบกดค้าง/สไลด์ผ่าน VirtualInputManager
-                            local pos = element.AbsolutePosition
-                            local size = element.AbsoluteSize
-                            local startX = pos.X + 10
-                            local startY = pos.Y + (size.Y / 2)
-                            local endX = pos.X + size.X - 10
-                            
-                            -- กดลงแล้วลากไปทางขวา (Simulate Touch Drag)
-                            VirtualInputManager:SendTouchEvent(0, 0, startX, startY)
-                            task.wait(0.05)
-                            VirtualInputManager:SendTouchEvent(0, 1, endX, startY)
-                            task.wait(0.05)
-                            VirtualInputManager:SendTouchEvent(0, 2, endX, startY)
-                            
-                            -- รัน Event ปกติสำรองไว้
-                            if element:IsA("GuiButton") then
-                                for _, conn in pairs(getconnections(element.MouseButton1Click)) do conn:Fire() end
-                                for _, conn in pairs(getconnections(element.Activated)) do conn:Fire() end
-                            end
-                        end)
-                    end
-                end
+    -- 3. ตรวจหาจาก Model ลูกค้า NPC ใน Map
+    for _, model in pairs(Workspace:GetChildren()) do
+        if model:IsA("Model") and model:FindFirstChild("Humanoid") and model:FindFirstChild("Head") then
+            if model.Head:FindFirstChildOfClass("BillboardGui") then
+                return model.Head.CFrame
             end
         end
     end
+    
+    return nil
 end
 
--- ลูปทำงาน Auto Farm หลัก
+-- ลูปการทำงาน Auto Farm หลัก
 task.spawn(function()
     while true do
         if AutoFarm then
             pcall(function()
-                -- 1. กดรับงานในโทรศัพท์
-                TriggerPhoneButtons()
+                -- Step 1: กดรับงาน / กดปุ่มโทรศัพท์
+                ForceClickPhone()
                 
-                -- 2. วาปไปยังจุดหมาย (จุดรับลูกค้า / จุดส่ง)
-                local dest = FindDestination()
-                if dest then
-                    TeleportTo(dest)
+                -- Step 2: ค้นหาพิกัดและวาปรถ+ตัวละครไปหาจุดหมาย
+                local targetCFrame = GetTargetDestination()
+                if targetCFrame then
+                    TeleportTo(targetCFrame)
                 end
             end)
         end
-        task.wait(0.8) -- ปรับเวลาสแกนหน่วงเพื่อป้องกันการโดนเตะ
+        task.wait(0.5) -- ความถี่ในการทำงาน (0.5 วินาที)
     end
 end)
 
@@ -193,7 +187,7 @@ FarmBtn.MouseButton1Click:Connect(function()
     end
 end)
 
--- ปุ่มสวิตช์ Anti-AFK
+-- ปุ่มสวิตช์ Anti-AFK (กันหลุด 24 ชม.+)
 local afkConn
 AfkBtn.MouseButton1Click:Connect(function()
     AntiAFK = not AntiAFK
